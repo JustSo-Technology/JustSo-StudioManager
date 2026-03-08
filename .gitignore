@@ -1,0 +1,15 @@
+replit*
+.env
+.env.local
+*.local
+
+node_modules/
+dist/
+
+.DS_Store
+.idea/
+.vscode/
+
+.cursor/
+
+attached_assets/targeted_element_*.png
