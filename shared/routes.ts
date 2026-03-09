@@ -16,13 +16,34 @@ import {
   insertSpaceSchema,
   insertTeamMemberSchema,
   insertTeamSchema,
-  insertUserProfileSchema,
+  insertWorkspaceInviteSchema,
+  insertWorkspaceSchema,
   services,
   spaces,
   teamMembers,
   teams,
-  userProfiles,
+  workspaceInvites,
+  workspaceProfileResponseSchema,
+  workspaces,
 } from "./schema";
+
+const sessionUserSchema = z.object({
+  id: z.string(),
+  email: z.string().email(),
+  username: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  fullName: z.string().nullable(),
+  appRole: z.enum(["member", "admin"]),
+});
+
+const sessionWorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  displayName: z.string().nullable(),
+  publicSlug: z.string().nullable(),
+  membershipRole: z.enum(["owner", "manager", "member"]).nullable(),
+});
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),
@@ -37,18 +58,105 @@ export const api = {
       method: "GET" as const,
       path: "/api/profiles/me" as const,
       responses: {
-        200: z.custom<typeof userProfiles.$inferSelect>(),
+        200: workspaceProfileResponseSchema,
         404: errorSchemas.notFound,
       },
     },
     update: {
       method: "PUT" as const,
       path: "/api/profiles/me" as const,
-      input: insertUserProfileSchema.partial(),
+      input: insertWorkspaceSchema.partial(),
       responses: {
-        200: z.custom<typeof userProfiles.$inferSelect>(),
+        200: workspaceProfileResponseSchema,
         400: errorSchemas.validation,
       },
+    },
+  },
+  auth: {
+    session: {
+      method: "GET" as const,
+      path: "/api/auth/user" as const,
+      responses: {
+        200: z.object({
+          user: sessionUserSchema,
+          activeWorkspaceId: z.string().nullable(),
+          workspaces: z.array(sessionWorkspaceSchema),
+          invite: z
+            .object({
+              token: z.string(),
+              workspaceId: z.string(),
+              workspaceName: z.string(),
+              email: z.string().email(),
+              role: z.enum(["owner", "manager", "member"]),
+              expiresAt: z.string(),
+            })
+            .nullable(),
+        }),
+        401: errorSchemas.unauthorized,
+      },
+    },
+    switchWorkspace: {
+      method: "POST" as const,
+      path: "/api/auth/workspaces/switch" as const,
+      input: z.object({ workspaceId: z.string() }),
+      responses: { 200: z.object({ workspaceId: z.string() }), 400: errorSchemas.validation, 403: errorSchemas.forbidden },
+    },
+  },
+  workspaces: {
+    list: {
+      method: "GET" as const,
+      path: "/api/workspaces" as const,
+      responses: { 200: z.array(z.custom<typeof workspaces.$inferSelect>()) },
+    },
+    create: {
+      method: "POST" as const,
+      path: "/api/workspaces" as const,
+      input: insertWorkspaceSchema,
+      responses: { 201: z.custom<typeof workspaces.$inferSelect>(), 400: errorSchemas.validation },
+    },
+  },
+  invites: {
+    list: {
+      method: "GET" as const,
+      path: "/api/invites" as const,
+      responses: { 200: z.array(z.custom<typeof workspaceInvites.$inferSelect>()) },
+    },
+    create: {
+      method: "POST" as const,
+      path: "/api/invites" as const,
+      input: insertWorkspaceInviteSchema.extend({
+        workspaceId: z.string(),
+        email: z.string().email(),
+        role: z.enum(["owner", "manager", "member"]).default("member"),
+        expiresAt: z.coerce.date().optional(),
+      }),
+      responses: { 201: z.custom<typeof workspaceInvites.$inferSelect>(), 400: errorSchemas.validation },
+    },
+    resolve: {
+      method: "GET" as const,
+      path: "/api/invites/:token" as const,
+      responses: {
+        200: z.object({
+          invite: z.custom<typeof workspaceInvites.$inferSelect>(),
+          workspace: z.custom<typeof workspaces.$inferSelect>(),
+        }),
+        404: errorSchemas.notFound,
+      },
+    },
+    revoke: {
+      method: "POST" as const,
+      path: "/api/invites/:id/revoke" as const,
+      responses: { 200: z.custom<typeof workspaceInvites.$inferSelect>(), 404: errorSchemas.notFound },
+    },
+    resend: {
+      method: "POST" as const,
+      path: "/api/invites/:id/resend" as const,
+      responses: { 200: z.custom<typeof workspaceInvites.$inferSelect>(), 404: errorSchemas.notFound },
+    },
+    accept: {
+      method: "POST" as const,
+      path: "/api/invites/:token/accept" as const,
+      responses: { 200: z.object({ workspaceId: z.string() }), 404: errorSchemas.notFound },
     },
   },
   teams: {

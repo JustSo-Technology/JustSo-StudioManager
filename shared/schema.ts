@@ -4,7 +4,9 @@ import { z } from "zod";
 
 export * from "./models/auth";
 
-export const ROLE_OPTIONS = ["tenant", "admin"] as const;
+export const APP_ROLE_OPTIONS = ["member", "admin"] as const;
+export const WORKSPACE_MEMBERSHIP_ROLE_OPTIONS = ["owner", "manager", "member"] as const;
+export const WORKSPACE_INVITE_STATUS_OPTIONS = ["pending", "accepted", "revoked", "expired"] as const;
 export const VISIBILITY_OPTIONS = ["private", "team", "all_tenants", "public"] as const;
 export const CALENDAR_PROVIDER_OPTIONS = ["internal", "caldav"] as const;
 export const CALENDAR_SYNC_STATUS_OPTIONS = ["connected", "pending", "sync_failed", "disconnected"] as const;
@@ -14,10 +16,10 @@ export const EMAIL_SECURITY_MODE_OPTIONS = ["none", "starttls", "ssl"] as const;
 export const BOOKING_EMAIL_REMINDER_TYPE_OPTIONS = ["booking_reminder_24h"] as const;
 export const BOOKING_EMAIL_REMINDER_STATUS_OPTIONS = ["pending", "processing", "sent", "failed", "cancelled"] as const;
 
-export const userProfiles = pgTable("user_profiles", {
-  userId: varchar("user_id").primaryKey(),
-  role: text("role").notNull().default("tenant"),
-  tenantName: text("tenant_name"),
+export const workspaces = pgTable("workspaces", {
+  id: varchar("id").primaryKey(),
+  studioId: varchar("studio_id").notNull().default("justso-studios"),
+  name: text("name").notNull(),
   displayName: text("display_name"),
   publicSlug: text("public_slug"),
   tagline: text("tagline"),
@@ -33,11 +35,38 @@ export const userProfiles = pgTable("user_profiles", {
   brandColor: text("brand_color").default("#111827"),
   bookingNotes: text("booking_notes"),
   bookingTerms: text("booking_terms"),
+  createdByUserId: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const workspaceMemberships = pgTable("workspace_memberships", {
+  id: serial("id").primaryKey(),
+  workspaceId: varchar("workspace_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  role: text("role").notNull().default("member"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const workspaceInvites = pgTable("workspace_invites", {
+  id: serial("id").primaryKey(),
+  workspaceId: varchar("workspace_id").notNull(),
+  inviterUserId: varchar("inviter_user_id").notNull(),
+  email: varchar("email").notNull(),
+  role: text("role").notNull().default("member"),
+  token: varchar("token").notNull(),
+  status: text("status").notNull().default("pending"),
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const teams = pgTable("teams", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  workspaceId: varchar("workspace_id").notNull(),
   ownerId: varchar("owner_id").notNull(),
   description: text("description"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -190,8 +219,28 @@ export const bookingEmailReminders = pgTable("booking_email_reminders", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({ userId: true });
-export const insertTeamSchema = createInsertSchema(teams).omit({ id: true, ownerId: true, createdAt: true });
+export const insertWorkspaceSchema = createInsertSchema(workspaces).omit({
+  id: true,
+  studioId: true,
+  createdByUserId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export const insertWorkspaceMembershipSchema = createInsertSchema(workspaceMemberships).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export const insertWorkspaceInviteSchema = createInsertSchema(workspaceInvites).omit({
+  id: true,
+  inviterUserId: true,
+  token: true,
+  status: true,
+  acceptedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export const insertTeamSchema = createInsertSchema(teams).omit({ id: true, ownerId: true, workspaceId: true, createdAt: true });
 export const insertTeamMemberSchema = createInsertSchema(teamMembers).omit({ id: true });
 export const insertCalendarConnectionSchema = createInsertSchema(calendarConnections).omit({ id: true, tenantId: true, syncStatus: true, lastSyncedAt: true, createdAt: true });
 export const insertCalendarResourceSchema = createInsertSchema(calendarResources).omit({ id: true, tenantId: true, createdAt: true });
@@ -224,7 +273,9 @@ export const insertBookingEmailReminderSchema = createInsertSchema(bookingEmailR
   sentAt: true,
 });
 
-export type UserProfile = typeof userProfiles.$inferSelect;
+export type Workspace = typeof workspaces.$inferSelect;
+export type WorkspaceMembership = typeof workspaceMemberships.$inferSelect;
+export type WorkspaceInvite = typeof workspaceInvites.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
@@ -238,6 +289,10 @@ export type EmailVerificationCode = typeof emailVerificationCodes.$inferSelect;
 export type EmailSettings = typeof emailSettings.$inferSelect;
 export type BookingEmailReminder = typeof bookingEmailReminders.$inferSelect;
 
+export type CreateWorkspaceRequest = z.infer<typeof insertWorkspaceSchema>;
+export type UpdateWorkspaceRequest = Partial<CreateWorkspaceRequest>;
+export type CreateWorkspaceMembershipRequest = z.infer<typeof insertWorkspaceMembershipSchema>;
+export type CreateWorkspaceInviteRequest = z.infer<typeof insertWorkspaceInviteSchema>;
 export type CreateTeamRequest = z.infer<typeof insertTeamSchema>;
 export type UpdateTeamRequest = Partial<CreateTeamRequest>;
 export type CreateCalendarConnectionRequest = z.infer<typeof insertCalendarConnectionSchema>;
@@ -256,6 +311,31 @@ export type CreateEmailSettingsRequest = z.infer<typeof insertEmailSettingsSchem
   smtpPassword: string;
 };
 export type CreateBookingEmailReminderRequest = z.infer<typeof insertBookingEmailReminderSchema>;
+
+export const workspaceProfileResponseSchema = z.object({
+  id: z.string(),
+  role: z.enum(["tenant", "admin"]),
+  membershipRole: z.enum(["owner", "manager", "member"]).nullable(),
+  studioId: z.string(),
+  name: z.string(),
+  tenantName: z.string(),
+  displayName: z.string().nullable(),
+  publicSlug: z.string().nullable(),
+  tagline: z.string().nullable(),
+  heroTitle: z.string().nullable(),
+  heroDescription: z.string().nullable(),
+  bio: z.string().nullable(),
+  contactEmail: z.string().nullable(),
+  contactPhone: z.string().nullable(),
+  websiteUrl: z.string().nullable(),
+  instagramUrl: z.string().nullable(),
+  logoUrl: z.string().nullable(),
+  coverImageUrl: z.string().nullable(),
+  brandColor: z.string().nullable(),
+  bookingNotes: z.string().nullable(),
+  bookingTerms: z.string().nullable(),
+  createdByUserId: z.string().nullable(),
+});
 
 export interface GuestBookingInitRequest {
   guestName: string;
@@ -288,7 +368,9 @@ export interface GuestSignupRequest {
   password: string;
 }
 
-export type Role = typeof ROLE_OPTIONS[number];
+export type AppRole = typeof APP_ROLE_OPTIONS[number];
+export type WorkspaceMembershipRole = typeof WORKSPACE_MEMBERSHIP_ROLE_OPTIONS[number];
+export type WorkspaceInviteStatus = typeof WORKSPACE_INVITE_STATUS_OPTIONS[number];
 export type Visibility = typeof VISIBILITY_OPTIONS[number];
 export type CalendarProvider = typeof CALENDAR_PROVIDER_OPTIONS[number];
 export type CalendarSyncStatus = typeof CALENDAR_SYNC_STATUS_OPTIONS[number];

@@ -18,6 +18,7 @@ import Profile from "./pages/profile";
 import PublicPage from "./pages/public-page";
 import TenantPublicPage from "./pages/tenant-public";
 import EmailSettingsPage from "./pages/email-settings";
+import AccessPage from "./pages/access";
 
 function Router() {
   return (
@@ -35,6 +36,7 @@ function Router() {
             <Route path="/hires" component={Hires} />
             <Route path="/calendars" component={Calendars} />
             <Route path="/public-page" component={PublicPage} />
+            <Route path="/access" component={AccessPage} />
             <Route path="/settings/email" component={EmailSettingsPage} />
             <Route path="/profile" component={Profile} />
             <Route component={NotFound} />

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { Express } from "express";
 import type { Server } from "http";
 import { z } from "zod";
@@ -5,8 +6,8 @@ import { registerAuthRoutes, setupAuth, isAuthenticated } from "./auth";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import {
+  APP_ROLE_OPTIONS,
   CALENDAR_PROVIDER_OPTIONS,
-  ROLE_OPTIONS,
   VISIBILITY_OPTIONS,
   type Booking,
 } from "@shared/schema";
@@ -16,49 +17,58 @@ import { EmailConfigurationError, emailService } from "./email";
 import { scheduleBookingReminder, sendBookingCancellationEmail, sendBookingConfirmationEmail, getBookingEmailContext } from "./booking-email";
 
 const visibilityEnum = z.enum(VISIBILITY_OPTIONS as unknown as [string, ...string[]]);
-const roleEnum = z.enum(ROLE_OPTIONS as unknown as [string, ...string[]]);
+const appRoleEnum = z.enum(APP_ROLE_OPTIONS as unknown as [string, ...string[]]);
 const providerEnum = z.enum(CALENDAR_PROVIDER_OPTIONS as unknown as [string, ...string[]]);
 
-async function getAuthContext(req: any) {
-  const userId = req.session?.user?.id;
-  if (!userId) {
+async function getAuthContext(req: any): Promise<any> {
+  const actorUserId = req.session?.user?.id;
+  if (!actorUserId) {
     return null;
   }
 
-  let profile = await storage.getProfile(userId);
-  if (!profile) {
-    try {
-      profile = await storage.upsertProfile(userId, {
-        role: "tenant",
-        tenantName: req.session.user?.firstName || "Untitled Studio",
-        displayName: req.session.user?.firstName ? `${req.session.user.firstName} Studio` : "Untitled Studio",
-      });
-    } catch {
-      profile = {
-        userId,
-        role: "tenant",
-        tenantName: req.session.user?.firstName || "Untitled Studio",
-        displayName: req.session.user?.firstName ? `${req.session.user.firstName} Studio` : "Untitled Studio",
-        publicSlug: slugify(req.session.user?.firstName || "studio"),
-        tagline: null,
-        heroTitle: null,
-        heroDescription: null,
-        bio: null,
-        contactEmail: req.session.user?.email || null,
-        contactPhone: null,
-        websiteUrl: null,
-        instagramUrl: null,
-        logoUrl: null,
-        coverImageUrl: null,
-        brandColor: "#111827",
-        bookingNotes: null,
-        bookingTerms: null,
-      };
-    }
+  const availableWorkspaces = await storage.getWorkspacesForUser(actorUserId);
+  const activeWorkspaceId =
+    req.session.activeWorkspaceId && availableWorkspaces.some((workspace) => workspace.id === req.session.activeWorkspaceId)
+      ? req.session.activeWorkspaceId
+      : availableWorkspaces[0]?.id;
+
+  if (!activeWorkspaceId) {
+    return {
+      userId: null,
+      actorUserId,
+      profile: null,
+      workspaceId: null,
+      membershipRole: null,
+      teamIds: await storage.getUserTeamIds(actorUserId),
+      workspaces: availableWorkspaces,
+      appRole: req.session.user?.appRole || "member",
+    };
   }
 
-  const teamIds = await storage.getUserTeamIds(userId);
-  return { userId, profile, teamIds };
+  req.session.activeWorkspaceId = activeWorkspaceId;
+  const workspace = await storage.getProfile(activeWorkspaceId);
+  const membership = await storage.getWorkspaceMembership(activeWorkspaceId, actorUserId);
+  const profile = workspace
+    ? {
+        ...workspace,
+        userId: workspace.id,
+        tenantName: workspace.name,
+        role: req.session.user?.appRole === "admin" ? "admin" : "tenant",
+        membershipRole: membership?.role || null,
+      }
+    : null;
+
+  const teamIds = await storage.getUserTeamIds(actorUserId);
+  return {
+    userId: activeWorkspaceId,
+    actorUserId,
+    profile,
+    workspaceId: activeWorkspaceId,
+    membershipRole: membership?.role || null,
+    teamIds,
+    workspaces: availableWorkspaces,
+    appRole: req.session.user?.appRole || "member",
+  };
 }
 
 function requireAdminProfile(ctx: Awaited<ReturnType<typeof getAuthContext>>) {
@@ -102,7 +112,8 @@ function filterByVisibility<T extends { visibility: string; teamId: number | nul
 async function canManageTeamResource(
   teamId: number | null,
   role: string | undefined,
-  userId: string,
+  actorUserId: string,
+  workspaceId: string,
   userTeamIds: number[],
   resourceOwnerId?: string,
 ) {
@@ -112,7 +123,7 @@ async function canManageTeamResource(
   if (role !== "tenant") {
     return false;
   }
-  if (resourceOwnerId && resourceOwnerId === userId) {
+  if (resourceOwnerId && resourceOwnerId === workspaceId) {
     return true;
   }
   if (teamId && userTeamIds.includes(teamId)) {
@@ -120,7 +131,7 @@ async function canManageTeamResource(
   }
   if (teamId) {
     const team = await storage.getTeam(teamId);
-    return !!team && team.ownerId === userId;
+    return !!team && team.ownerId === actorUserId;
   }
   return true;
 }
@@ -136,12 +147,12 @@ function slugify(value: string) {
 
 function normalizeProfileInput(input: Record<string, unknown>, existing: Record<string, unknown> | undefined) {
   const parsed = api.profiles.update.input.parse(input);
-  const tenantName = String(parsed.tenantName || parsed.displayName || existing?.tenantName || existing?.displayName || "Untitled Studio");
-  const displayName = String(parsed.displayName || parsed.tenantName || existing?.displayName || tenantName);
+  const tenantName = String(parsed.name || parsed.displayName || existing?.tenantName || existing?.displayName || "Untitled Workspace");
+  const displayName = String(parsed.displayName || parsed.name || existing?.displayName || tenantName);
   const publicSlug = slugify(String(parsed.publicSlug || existing?.publicSlug || displayName));
   return {
     ...parsed,
-    role: parsed.role ? roleEnum.parse(String(parsed.role)) : String(existing?.role || "tenant"),
+    name: tenantName,
     tenantName,
     displayName,
     publicSlug,
@@ -320,8 +331,7 @@ async function resolveBookableTarget(input: { spaceId?: number; serviceId?: numb
 async function seedDatabase() {
   const demoUserId = "demo-user-123";
   await storage.upsertProfile(demoUserId, {
-    role: "tenant",
-    tenantName: "Demo Studio",
+    name: "Demo Studio",
     displayName: "Demo Studio",
     publicSlug: "demo-studio",
     tagline: "Creative production, portrait sessions, and studio hire.",
@@ -436,7 +446,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get(api.profiles.me.path, requireAuth, async (req: any, res) => {
     const ctx = await getAuthContext(req);
-    if (!ctx) {
+    if (!ctx || !ctx.profile) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     res.json(ctx.profile);
@@ -445,24 +455,166 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.put(api.profiles.update.path, requireAuth, async (req: any, res) => {
     try {
       const ctx = await getAuthContext(req);
-      if (!ctx) {
+      if (!ctx || !ctx.profile || !ctx.workspaceId) {
         return res.status(401).json({ message: "Unauthorized" });
       }
 
       const existingBySlug = req.body.publicSlug ? await storage.getProfileBySlug(slugify(req.body.publicSlug)) : undefined;
-      if (existingBySlug && existingBySlug.userId !== ctx.userId) {
+      if (existingBySlug && existingBySlug.id !== ctx.workspaceId) {
         return res.status(400).json({ message: "That public page slug is already taken." });
       }
 
       const normalized = normalizeProfileInput(req.body, ctx.profile);
-      const profile = await storage.upsertProfile(ctx.userId, normalized);
-      res.json(profile);
+      const profile = await storage.upsertProfile(ctx.workspaceId, normalized);
+      res.json({
+        ...profile,
+        tenantName: profile.name,
+        role: ctx.profile.role,
+        membershipRole: ctx.membershipRole,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
       }
       throw error;
     }
+  });
+
+  app.get(api.workspaces.list.path, requireAuth, async (req: any, res) => {
+    const ctx = await getAuthContext(req);
+    if (!ctx) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    return res.json(ctx.workspaces);
+  });
+
+  app.post(api.workspaces.create.path, requireAuth, async (req: any, res) => {
+    try {
+      const ctx = await getAuthContext(req);
+      if (!ctx) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      if (ctx.appRole !== "admin") {
+        return res.status(403).json({ message: "Only platform admins can create workspaces." });
+      }
+
+      const input = api.workspaces.create.input.parse(req.body);
+      const existingBySlug = input.publicSlug ? await storage.getProfileBySlug(slugify(input.publicSlug)) : undefined;
+      if (existingBySlug) {
+        return res.status(400).json({ message: "That public page slug is already taken." });
+      }
+
+      const workspace = await storage.createWorkspace(ctx.actorUserId, normalizeProfileInput(input, undefined));
+      req.session.activeWorkspaceId = workspace.id;
+      return res.status(201).json(workspace);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      throw error;
+    }
+  });
+
+  app.get(api.invites.list.path, requireAuth, async (req: any, res) => {
+    const ctx = await getAuthContext(req);
+    if (!ctx || !ctx.workspaceId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    if (ctx.appRole !== "admin") {
+      return res.status(403).json({ message: "Only platform admins can manage invites." });
+    }
+    return res.json(await storage.getWorkspaceInvitesByWorkspace(ctx.workspaceId));
+  });
+
+  app.post(api.invites.create.path, requireAuth, async (req: any, res) => {
+    try {
+      const ctx = await getAuthContext(req);
+      if (!ctx || !ctx.workspaceId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      if (ctx.appRole !== "admin") {
+        return res.status(403).json({ message: "Only platform admins can invite users." });
+      }
+      const input = api.invites.create.input.parse(req.body);
+      const invite = await storage.createWorkspaceInvite(ctx.actorUserId, {
+        ...input,
+        workspaceId: input.workspaceId || ctx.workspaceId,
+        expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+      return res.status(201).json(invite);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      throw error;
+    }
+  });
+
+  app.get(api.invites.resolve.path.replace(":token", ":token"), async (req: any, res) => {
+    const invite = await storage.getWorkspaceInviteByToken(req.params.token);
+    if (!invite) {
+      return res.status(404).json({ message: "Invite not found." });
+    }
+    const workspace = await storage.getWorkspace(invite.workspaceId);
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found." });
+    }
+    return res.json({ invite, workspace });
+  });
+
+  app.post(api.invites.revoke.path.replace(":id", ":id"), requireAuth, async (req: any, res) => {
+    const ctx = await getAuthContext(req);
+    if (!ctx || ctx.appRole !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const invite = await storage.getWorkspaceInvite(Number(req.params.id));
+    if (!invite) {
+      return res.status(404).json({ message: "Invite not found." });
+    }
+    const updated = await storage.updateWorkspaceInvite(invite.id, { status: "revoked" });
+    return res.json(updated);
+  });
+
+  app.post(api.invites.resend.path.replace(":id", ":id"), requireAuth, async (req: any, res) => {
+    const ctx = await getAuthContext(req);
+    if (!ctx || ctx.appRole !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    const invite = await storage.getWorkspaceInvite(Number(req.params.id));
+    if (!invite) {
+      return res.status(404).json({ message: "Invite not found." });
+    }
+    const updated = await storage.updateWorkspaceInvite(invite.id, {
+      token: crypto.randomUUID?.() || slugify(`${invite.email}-${Date.now()}`),
+      status: "pending",
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      acceptedAt: null,
+    });
+    return res.json(updated);
+  });
+
+  app.post(api.invites.accept.path.replace(":token", ":token"), requireAuth, async (req: any, res) => {
+    const ctx = await getAuthContext(req);
+    if (!ctx) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const invite = await storage.getWorkspaceInviteByToken(req.params.token);
+    if (!invite) {
+      return res.status(404).json({ message: "Invite not found." });
+    }
+    if (new Date(invite.expiresAt) < new Date() || invite.status !== "pending") {
+      return res.status(404).json({ message: "Invite has expired." });
+    }
+    if (invite.email.toLowerCase() !== req.session.user.email.toLowerCase()) {
+      return res.status(403).json({ message: "This invite belongs to a different email address." });
+    }
+    await storage.addWorkspaceMembership(invite.workspaceId, ctx.actorUserId, invite.role);
+    await storage.updateWorkspaceInvite(invite.id, {
+      status: "accepted",
+      acceptedAt: new Date(),
+    });
+    req.session.activeWorkspaceId = invite.workspaceId;
+    return res.json({ workspaceId: invite.workspaceId });
   });
 
   app.post("/api/login-demo", async (req: any, res) => {
@@ -475,6 +627,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       firstName: "Demo",
       lastName: "Tenant",
       email: "demo@example.com",
+      username: "demo-tenant",
+      fullName: "Demo Tenant",
+      appRole: "member",
     };
 
     req.session.user = demoUser;
@@ -483,12 +638,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(500).json({ message: "Session error" });
       }
 
-      await storage.upsertProfile(demoUser.id, {
-        role: "tenant",
-        tenantName: "Demo Studio",
-        displayName: "Demo Studio",
+      await storage.upsertProfile("demo-workspace-123", {
+        name: "Demo Workspace",
+        displayName: "Demo Workspace",
         publicSlug: "demo-studio",
       });
+      await storage.addWorkspaceMembership("demo-workspace-123", demoUser.id, "owner");
+      req.session.activeWorkspaceId = "demo-workspace-123";
       res.json({ message: "Logged in as demo user", user: demoUser });
     });
   });
@@ -503,6 +659,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       firstName: "Demo",
       lastName: "Admin",
       email: "admin@example.com",
+      username: "demo-admin",
+      fullName: "Demo Admin",
+      appRole: "admin",
     };
 
     req.session.user = demoUser;
@@ -511,9 +670,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(500).json({ message: "Session error" });
       }
 
-      await storage.upsertProfile(demoUser.id, {
-        role: "admin",
-        tenantName: "JustSo. Studios",
+      await storage.upsertProfile("justso-studios-admin", {
+        name: "JustSo. Studios",
         displayName: "JustSo. Studios",
         publicSlug: "justso-studios",
         tagline: "Tenant backend and platform controls.",
@@ -522,6 +680,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         contactEmail: "hello@justso.studio",
         brandColor: "#0f172a",
       });
+      await storage.addWorkspaceMembership("justso-studios-admin", demoUser.id, "owner");
+      req.session.activeWorkspaceId = "justso-studios-admin";
       res.json({ message: "Logged in as demo admin", user: demoUser });
     });
   });
@@ -747,7 +907,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (ctx.profile.role === "admin") {
       return res.json(await storage.getTeams());
     }
-    return res.json(await storage.getTeamsByOwner(ctx.userId));
+    return res.json(await storage.getTeamsByWorkspace(ctx.userId));
   });
 
   app.post(api.teams.create.path, requireAuth, async (req: any, res) => {
@@ -756,7 +916,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!ctx) {
         return res.status(401).json({ message: "Unauthorized" });
       }
-      const team = await storage.createTeam(ctx.userId, api.teams.create.input.parse(req.body));
+      const team = await storage.createTeam(ctx.userId, ctx.actorUserId, api.teams.create.input.parse(req.body));
       res.status(201).json(team);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -776,7 +936,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!team) {
         return res.status(404).json({ message: "Team not found" });
       }
-      if (team.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (team.ownerId !== ctx.actorUserId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       const updated = await storage.updateTeam(team.id, api.teams.update.input.parse(req.body));
@@ -798,7 +958,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!team) {
       return res.status(404).json({ message: "Team not found" });
     }
-    if (team.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
+    if (team.ownerId !== ctx.actorUserId && ctx.profile.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteTeam(team.id);
@@ -814,7 +974,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!team) {
       return res.status(404).json({ message: "Team not found" });
     }
-    if (team.ownerId !== ctx.userId && !ctx.teamIds.includes(team.id) && ctx.profile.role !== "admin") {
+    if (team.ownerId !== ctx.actorUserId && !ctx.teamIds.includes(team.id) && ctx.profile.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
     }
     res.json(await storage.getTeamMembers(team.id));
@@ -830,7 +990,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!team) {
         return res.status(404).json({ message: "Team not found" });
       }
-      if (team.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (team.ownerId !== ctx.actorUserId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       const input = api.teams.members.add.input.parse(req.body);
@@ -853,7 +1013,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!team) {
       return res.status(404).json({ message: "Team not found" });
     }
-    if (team.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
+    if (team.ownerId !== ctx.actorUserId && ctx.profile.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.removeTeamMember(team.id, req.params.userId);
@@ -996,7 +1156,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Service not found" });
       }
-      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.userId, ctx.teamIds, existing.tenantId))) {
+      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.tenantId))) {
         return res.status(403).json({ message: "Forbidden" });
       }
       const bodySchema = api.services.update.input.extend({
@@ -1025,7 +1185,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!existing) {
       return res.status(404).json({ message: "Service not found" });
     }
-    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.userId, ctx.teamIds, existing.tenantId))) {
+    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.tenantId))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteService(existing.id);
@@ -1075,7 +1235,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Item not found" });
       }
-      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.userId, ctx.teamIds, existing.ownerId))) {
+      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.ownerId))) {
         return res.status(403).json({ message: "Forbidden" });
       }
       const input = api.inventory.update.input.parse(req.body);
@@ -1101,7 +1261,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!existing) {
       return res.status(404).json({ message: "Item not found" });
     }
-    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.userId, ctx.teamIds, existing.ownerId))) {
+    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.ownerId))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteInventoryItem(existing.id);
@@ -1145,7 +1305,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         startTime: input.startTime,
         endTime: input.endTime,
       });
-      let created = await storage.createBooking(ctx.userId, {
+      let created = await storage.createBooking(ctx.actorUserId, {
         ...input,
         tenantId: target.tenantId,
         calendarResourceId: target.calendarResourceId,
@@ -1241,7 +1401,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (item.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
-      const hire = await storage.createInventoryHire(ctx.userId, input);
+      const hire = await storage.createInventoryHire(ctx.actorUserId, input);
       res.status(201).json(hire);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1284,14 +1444,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       storage.getServices(),
       storage.getSpaces(),
       storage.getInventoryItems(),
-      storage.getCalendarResourcesByTenant(profile.userId),
+      storage.getCalendarResourcesByTenant(profile.id),
     ]);
 
     res.json({
       profile,
-      services: allServices.filter((service) => service.tenantId === profile.userId && service.visibility === "public"),
-      spaces: allSpaces.filter((space) => space.tenantId === profile.userId && space.visibility === "public" && space.isBookable),
-      inventory: allItems.filter((item) => item.ownerId === profile.userId && item.visibility === "public" && item.isAvailableForHire),
+      services: allServices.filter((service) => service.tenantId === profile.id && service.visibility === "public"),
+      spaces: allSpaces.filter((space) => space.tenantId === profile.id && space.visibility === "public" && space.isBookable),
+      inventory: allItems.filter((item) => item.ownerId === profile.id && item.visibility === "public" && item.isAvailableForHire),
       calendars: resources,
     });
   });

@@ -1,24 +1,16 @@
 import type { Express } from "express";
-import passport from "passport";
+import { count, eq } from "drizzle-orm";
 import { z } from "zod";
-import { authStorage } from "./storage";
+import { api } from "@shared/routes";
+import { users } from "@shared/models/auth";
+import { db } from "../db";
 import { storage } from "../storage";
-import { hashPassword } from "./password";
+import { authStorage } from "./storage";
+import { buildLoginUrl, buildLogoutUrl, exchangeCallback, getAuthentikConfig, getUserInfo } from "./oidc";
 
-const signupSchema = z.object({
-  studioName: z.string().min(2, "Studio name is required"),
-  email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+const inviteTokenQuerySchema = z.object({
+  invite: z.string().optional(),
 });
-
-const loginSchema = z.object({
-  email: z.string().email("Enter a valid email"),
-  password: z.string().min(1, "Password is required"),
-});
-
-const AUTH_WINDOW_MS = 15 * 60 * 1000;
-const AUTH_MAX_ATTEMPTS = 10;
-const authAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function slugify(value: string) {
   return value
@@ -29,125 +21,221 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
-function getClientKey(req: any) {
-  return req.ip || req.headers["x-forwarded-for"] || "unknown";
-}
+function deriveNames(userInfo: Record<string, unknown>) {
+  const fullName = String(userInfo.name || "").trim() || null;
+  const givenName = String(userInfo.given_name || "").trim() || null;
+  const familyName = String(userInfo.family_name || "").trim() || null;
 
-function checkRateLimit(req: any, res: any) {
-  const key = String(getClientKey(req));
-  const now = Date.now();
-  const existing = authAttempts.get(key);
-
-  if (!existing || existing.resetAt < now) {
-    authAttempts.set(key, { count: 1, resetAt: now + AUTH_WINDOW_MS });
-    return false;
+  if (givenName || familyName) {
+    return { fullName: fullName || [givenName, familyName].filter(Boolean).join(" "), firstName: givenName, lastName: familyName };
   }
 
-  if (existing.count >= AUTH_MAX_ATTEMPTS) {
-    res.status(429).json({ message: "Too many auth attempts. Please try again later." });
+  if (fullName) {
+    const [firstName, ...rest] = fullName.split(/\s+/);
+    return { fullName, firstName: firstName || null, lastName: rest.join(" ") || null };
+  }
+
+  return { fullName: null, firstName: null, lastName: null };
+}
+
+async function ensureUniqueUsername(preferred: string) {
+  const base = slugify(preferred) || "user";
+  let candidate = base;
+  let suffix = 1;
+  while (await authStorage.getUserByUsername(candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function shouldBootstrapAdmin(email: string) {
+  const configured = (process.env.AUTH_BOOTSTRAP_ADMIN_EMAILS || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (configured.includes(email.toLowerCase())) {
     return true;
   }
 
-  existing.count += 1;
-  authAttempts.set(key, existing);
-  return false;
+  const [existingAdmins] = await db.select({ count: count() }).from(users).where(eq(users.appRole, "admin"));
+  return Number(existingAdmins?.count || 0) === 0;
 }
 
-function clearRateLimit(req: any) {
-  authAttempts.delete(String(getClientKey(req)));
+async function resolveLocalUser(userInfo: Record<string, unknown>, issuer: string) {
+  const email = String(userInfo.email || "").toLowerCase();
+  const subject = String(userInfo.sub || "");
+  if (!email || !subject) {
+    throw new Error("Authentik response is missing required email or subject claims.");
+  }
+
+  const names = deriveNames(userInfo);
+  const preferredUsername = String(userInfo.preferred_username || email.split("@")[0] || "user");
+  const existing =
+    (await authStorage.getUserByAuthentikIdentity(issuer, subject)) ||
+    (await authStorage.getUserByEmail(email));
+
+  const username = existing?.username || (await ensureUniqueUsername(preferredUsername));
+  const appRole = existing?.appRole || ((await shouldBootstrapAdmin(email)) ? "admin" : "member");
+
+  return authStorage.upsertUser({
+    id: existing?.id,
+    email,
+    username,
+    firstName: names.firstName,
+    lastName: names.lastName,
+    fullName: names.fullName,
+    profileImageUrl: typeof userInfo.picture === "string" ? userInfo.picture : null,
+    appRole,
+    authentikIssuer: issuer,
+    authentikSubject: subject,
+    lastLoginAt: new Date(),
+    updatedAt: new Date(),
+  });
 }
 
-// Register auth-specific routes
+async function applyInviteIfPresent(req: any, user: Awaited<ReturnType<typeof resolveLocalUser>>) {
+  const inviteToken = req.session?.inviteToken;
+  if (!inviteToken) {
+    return;
+  }
+
+  const invite = await storage.getWorkspaceInviteByToken(inviteToken);
+  if (!invite || invite.status !== "pending" || new Date(invite.expiresAt) < new Date()) {
+    req.session.inviteToken = null;
+    return;
+  }
+
+  if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
+    return;
+  }
+
+  await storage.addWorkspaceMembership(invite.workspaceId, user.id, invite.role);
+  await storage.updateWorkspaceInvite(invite.id, {
+    status: "accepted",
+    acceptedAt: new Date(),
+  });
+
+  req.session.activeWorkspaceId = invite.workspaceId;
+  req.session.inviteToken = null;
+}
+
 export function registerAuthRoutes(app: Express): void {
-  // Get current authenticated user
-  app.get("/api/auth/user", async (req: any, res) => {
+  app.get(api.auth.session.path, async (req: any, res) => {
     if (!req.session?.user) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    res.json(req.session.user);
+
+    const workspaces = await storage.getWorkspacesForUser(req.session.user.id);
+    const activeWorkspaceId =
+      req.session.activeWorkspaceId && workspaces.some((workspace) => workspace.id === req.session.activeWorkspaceId)
+        ? req.session.activeWorkspaceId
+        : workspaces[0]?.id || null;
+    req.session.activeWorkspaceId = activeWorkspaceId;
+
+    let invite = null;
+    if (req.session.inviteToken) {
+      const resolvedInvite = await storage.getWorkspaceInviteByToken(req.session.inviteToken);
+      const workspace = resolvedInvite ? await storage.getWorkspace(resolvedInvite.workspaceId) : undefined;
+      if (resolvedInvite && workspace) {
+        invite = {
+          token: resolvedInvite.token,
+          workspaceId: resolvedInvite.workspaceId,
+          workspaceName: workspace.displayName || workspace.name,
+          email: resolvedInvite.email,
+          role: resolvedInvite.role as "owner" | "manager" | "member",
+          expiresAt: resolvedInvite.expiresAt.toISOString(),
+        };
+      }
+    }
+
+    return res.json({
+      user: req.session.user,
+      activeWorkspaceId,
+      workspaces: workspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        displayName: workspace.displayName,
+        publicSlug: workspace.publicSlug,
+        membershipRole: workspace.membershipRole as "owner" | "manager" | "member" | null,
+      })),
+      invite,
+    });
   });
 
-  app.post("/api/auth/signup", async (req: any, res) => {
+  app.post(api.auth.switchWorkspace.path, async (req: any, res) => {
+    if (!req.session?.user?.id) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const input = api.auth.switchWorkspace.input.parse(req.body);
+    const membership = await storage.getWorkspaceMembership(input.workspaceId, req.session.user.id);
+    if (!membership && req.session.user.appRole !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    req.session.activeWorkspaceId = input.workspaceId;
+    return res.json({ workspaceId: input.workspaceId });
+  });
+
+  app.get("/api/auth/login", async (req: any, res) => {
+    const query = inviteTokenQuerySchema.parse(req.query);
+    if (query.invite) {
+      req.session.inviteToken = query.invite;
+    }
+
+    const { url, state, codeVerifier } = await buildLoginUrl();
+    req.session.oidc = { state, codeVerifier };
+    return res.redirect(url);
+  });
+
+  app.get("/api/auth/callback", async (req: any, res) => {
     try {
-      if (checkRateLimit(req, res)) {
-        return;
-      }
-      const input = signupSchema.parse(req.body);
-      const email = input.email.toLowerCase();
-      const existing = await authStorage.getUserByEmail(email);
-
-      if (existing) {
-        return res.status(409).json({ message: "That email is already registered." });
+      const { oidc } = req.session;
+      if (!oidc?.codeVerifier || !oidc.state) {
+        return res.status(400).json({ message: "Authentication session expired. Try signing in again." });
       }
 
-      const user = await authStorage.createUser({
-        email,
-        firstName: input.studioName,
-        passwordHash: await hashPassword(input.password),
-      });
+      const currentUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+      const { tokens } = await exchangeCallback(currentUrl, oidc.codeVerifier, oidc.state);
+      const userInfo = await getUserInfo(tokens.access_token);
+      const authConfig = getAuthentikConfig();
+      const user = await resolveLocalUser(userInfo as Record<string, unknown>, authConfig.issuerUrl);
 
-      await storage.upsertProfile(user.id, {
-        role: "tenant",
-        tenantName: input.studioName,
-        displayName: input.studioName,
-        publicSlug: slugify(input.studioName),
-        contactEmail: email,
-      });
+      req.session.user = {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
+        fullName: user.fullName ?? null,
+        appRole: user.appRole,
+      };
+      req.session.oidc = { idToken: tokens.id_token };
 
-      req.login(user, (error: any) => {
-        if (error) {
-          return res.status(500).json({ message: "Session error" });
-        }
-        clearRateLimit(req);
-        return res.status(201).json({
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-        });
-      });
+      await applyInviteIfPresent(req, user);
+
+      const workspaces = await storage.getWorkspacesForUser(user.id);
+      if (!req.session.activeWorkspaceId && workspaces[0]) {
+        req.session.activeWorkspaceId = workspaces[0].id;
+      }
+
+      return res.redirect("/");
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: error.errors[0].message });
-      }
-      return res.status(500).json({ message: "Could not create account." });
+      console.error("OIDC callback failed:", error);
+      return res.redirect("/?authError=signin_failed");
     }
   });
 
-  app.post("/api/auth/login", async (req: any, res) => {
-    try {
-      if (checkRateLimit(req, res)) {
-        return;
+  app.get("/api/auth/logout", async (req: any, res) => {
+    const idTokenHint = req.session?.oidc?.idToken;
+    const logoutUrl = await buildLogoutUrl(idTokenHint);
+    req.session.destroy((error: Error | null) => {
+      if (error) {
+        return res.status(500).json({ message: "Could not log out." });
       }
-      const input = loginSchema.parse(req.body);
-      req.body.email = input.email.toLowerCase();
-
-      passport.authenticate("local", (error: any, user: any, info: { message?: string } | undefined) => {
-        if (error) {
-          return res.status(500).json({ message: "Could not sign in." });
-        }
-        if (!user) {
-          return res.status(401).json({ message: info?.message || "Invalid email or password." });
-        }
-
-        req.login(user, (loginError: any) => {
-          if (loginError) {
-            return res.status(500).json({ message: "Session error" });
-          }
-          clearRateLimit(req);
-          return res.json({
-            id: user.id,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-          });
-        });
-      })(req, res);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: error.errors[0].message });
-      }
-      return res.status(500).json({ message: "Could not sign in." });
-    }
+      res.clearCookie("connect.sid");
+      return res.redirect(logoutUrl);
+    });
   });
 }

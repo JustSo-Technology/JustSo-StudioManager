@@ -60,7 +60,7 @@ export default function Home() {
         <div className="relative z-10 max-w-3xl">
           <p className="text-xs uppercase tracking-[0.22em] text-primary-foreground/60">Tenant Overview</p>
           <h1 className="mt-4 font-display text-4xl md:text-6xl font-bold tracking-tight">
-            {profile?.displayName || profile?.tenantName || "Your studio"} is ready to publish and book.
+            {profile?.displayName || profile?.tenantName || "Your workspace"} is ready to publish and book.
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-primary-foreground/80">
             Treat this space as your operational backend: connect calendars, publish services, track reservations, and keep your public page on-brand.

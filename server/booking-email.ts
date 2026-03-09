@@ -18,7 +18,7 @@ export async function getBookingEmailContext(booking: Booking) {
   }
 
   return {
-    tenantDisplayName: profile?.displayName || profile?.tenantName || "JustSo. Studio",
+    tenantDisplayName: profile?.displayName || profile?.name || "JustSo. Studio",
     resourceLabel,
     booking,
   };

@@ -1,115 +1,66 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { User } from "@shared/models/auth";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 
-type Credentials = {
-  email: string;
-  password: string;
-};
+type SessionResponse = typeof api.auth.session.responses[200]["_type"];
 
-type SignupPayload = Credentials & {
-  studioName: string;
-};
-
-async function fetchUser(): Promise<User | null> {
-  const response = await fetch("/api/auth/user", {
+async function fetchSession(): Promise<SessionResponse | null> {
+  const response = await fetch(api.auth.session.path, {
     credentials: "include",
   });
 
   if (response.status === 401) {
     return null;
   }
-
   if (!response.ok) {
     throw new Error(`${response.status}: ${response.statusText}`);
   }
-
-  return response.json();
-}
-
-async function logout(): Promise<void> {
-  await fetch("/api/logout", { 
-    method: "POST",
-    credentials: "include" 
-  });
-}
-
-async function readAuthError(response: Response) {
-  const payload = await response.json().catch(() => null);
-  return payload?.message || "Authentication failed";
+  return api.auth.session.responses[200].parse(await response.json());
 }
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { data: user, isLoading } = useQuery<User | null>({
-    queryKey: ["/api/auth/user"],
-    queryFn: fetchUser,
+  const { data, isLoading } = useQuery({
+    queryKey: [api.auth.session.path],
+    queryFn: fetchSession,
     retry: false,
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    staleTime: 1000 * 60,
   });
 
-  const logoutMutation = useMutation({
-    mutationFn: logout,
-    onSuccess: () => {
-      queryClient.setQueryData(["/api/auth/user"], null);
-      queryClient.removeQueries();
-      window.location.reload();
-    },
-  });
-
-  const loginMutation = useMutation({
-    mutationFn: async (credentials: Credentials) => {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
+  const switchWorkspaceMutation = useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const response = await fetch(api.auth.switchWorkspace.path, {
+        method: api.auth.switchWorkspace.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(credentials),
         credentials: "include",
+        body: JSON.stringify({ workspaceId }),
       });
-      if (!response.ok) throw new Error(await readAuthError(response));
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || "Could not switch workspace.");
+      }
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries();
-    }
-  });
-
-  const signupMutation = useMutation({
-    mutationFn: async (payload: SignupPayload) => {
-      const response = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error(await readAuthError(response));
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries();
-    }
-  });
-
-  const loginAdminMutation = useMutation({
-    mutationFn: async () => {
-      const response = await fetch("/api/login-demo-admin", {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Admin login failed");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries();
-    }
   });
 
   return {
-    user,
+    session: data,
+    user: data?.user ?? null,
+    workspaces: data?.workspaces ?? [],
+    activeWorkspaceId: data?.activeWorkspaceId ?? null,
+    pendingInvite: data?.invite ?? null,
     isLoading,
-    isAuthenticated: !!user,
-    logout: logoutMutation.mutate,
-    isLoggingOut: logoutMutation.isPending,
-    signIn: loginMutation.mutate,
-    isSigningIn: loginMutation.isPending,
-    signUp: signupMutation.mutate,
-    isSigningUp: signupMutation.isPending,
-    loginAdmin: loginAdminMutation.mutate,
-    isLoggingInAdmin: loginAdminMutation.isPending,
+    isAuthenticated: !!data?.user,
+    signIn: (inviteToken?: string) => {
+      const url = inviteToken ? `/api/auth/login?invite=${encodeURIComponent(inviteToken)}` : "/api/auth/login";
+      window.location.assign(url);
+    },
+    logout: () => {
+      window.location.assign("/api/auth/logout");
+    },
+    switchWorkspace: switchWorkspaceMutation.mutate,
+    isSwitchingWorkspace: switchWorkspaceMutation.isPending,
   };
 }

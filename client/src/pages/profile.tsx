@@ -11,7 +11,7 @@ import { Loader2, User as UserIcon } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 
 const formSchema = z.object({
-  tenantName: z.string().min(2, "Studio name is required"),
+  tenantName: z.string().min(2, "Workspace name is required"),
   displayName: z.string().min(2, "Display name is required"),
   publicSlug: z.string().min(2, "Public slug is required"),
   tagline: z.string().optional(),
@@ -112,7 +112,7 @@ export default function Profile() {
               {user?.firstName?.[0] ? <span className="text-2xl font-bold">{user.firstName[0]}</span> : <UserIcon className="h-7 w-7" />}
             </div>
             <div>
-              <p className="font-display text-xl font-bold">{profile?.displayName || profile?.tenantName || "Studio tenant"}</p>
+              <p className="font-display text-xl font-bold">{profile?.displayName || profile?.tenantName || "Workspace"}</p>
               <p className="text-sm text-muted-foreground">{user?.email}</p>
             </div>
           </div>
@@ -141,7 +141,7 @@ export default function Profile() {
                   name="tenantName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Studio name</FormLabel>
+                      <FormLabel>Workspace name</FormLabel>
                       <FormControl>
                         <Input className="rounded-xl h-12" placeholder="JustSo. Portrait Studio" {...field} />
                       </FormControl>

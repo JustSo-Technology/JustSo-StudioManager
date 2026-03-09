@@ -1,4 +1,5 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { and, asc, desc, eq, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   bookings,
@@ -13,22 +14,27 @@ import {
   spaces,
   teamMembers,
   teams,
-  userProfiles,
+  workspaceInvites,
+  workspaceMemberships,
+  workspaces,
   type Booking,
+  type BookingEmailReminder,
   type CalendarConnection,
   type CalendarResource,
-  type CreateBookingRequest,
   type CreateBookingEmailReminderRequest,
+  type CreateBookingRequest,
   type CreateCalendarConnectionRequest,
   type CreateCalendarResourceRequest,
+  type CreateEmailSettingsRequest,
   type CreateInventoryHireRequest,
   type CreateInventoryItemRequest,
   type CreateServiceRequest,
   type CreateSpaceRequest,
   type CreateTeamRequest,
-  type EmailVerificationCode,
+  type CreateWorkspaceInviteRequest,
+  type CreateWorkspaceRequest,
   type EmailSettings,
-  type BookingEmailReminder,
+  type EmailVerificationCode,
   type InventoryHire,
   type InventoryItem,
   type Service,
@@ -41,18 +47,35 @@ import {
   type UpdateServiceRequest,
   type UpdateSpaceRequest,
   type UpdateTeamRequest,
-  type UserProfile,
+  type UpdateWorkspaceRequest,
+  type Workspace,
+  type WorkspaceInvite,
+  type WorkspaceMembership,
 } from "@shared/schema";
 
 export interface IStorage {
-  getProfile(userId: string): Promise<UserProfile | undefined>;
-  getProfileBySlug(publicSlug: string): Promise<UserProfile | undefined>;
-  upsertProfile(userId: string, profile: Partial<UserProfile>): Promise<UserProfile>;
+  getProfile(workspaceId: string): Promise<Workspace | undefined>;
+  getProfileBySlug(publicSlug: string): Promise<Workspace | undefined>;
+  upsertProfile(workspaceId: string, profile: Partial<Workspace>): Promise<Workspace>;
+
+  getWorkspace(workspaceId: string): Promise<Workspace | undefined>;
+  getWorkspacesForUser(userId: string): Promise<Array<Workspace & { membershipRole: string | null }>>;
+  createWorkspace(userId: string, workspace: CreateWorkspaceRequest): Promise<Workspace>;
+  updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Promise<Workspace>;
+
+  getWorkspaceMembership(workspaceId: string, userId: string): Promise<WorkspaceMembership | undefined>;
+  addWorkspaceMembership(workspaceId: string, userId: string, role?: string): Promise<WorkspaceMembership>;
+  getWorkspaceInvites(): Promise<WorkspaceInvite[]>;
+  getWorkspaceInvite(id: number): Promise<WorkspaceInvite | undefined>;
+  getWorkspaceInviteByToken(token: string): Promise<WorkspaceInvite | undefined>;
+  getWorkspaceInvitesByWorkspace(workspaceId: string): Promise<WorkspaceInvite[]>;
+  createWorkspaceInvite(inviterUserId: string, invite: CreateWorkspaceInviteRequest): Promise<WorkspaceInvite>;
+  updateWorkspaceInvite(id: number, updates: Partial<WorkspaceInvite>): Promise<WorkspaceInvite>;
 
   getTeams(): Promise<Team[]>;
-  getTeamsByOwner(ownerId: string): Promise<Team[]>;
+  getTeamsByWorkspace(workspaceId: string): Promise<Team[]>;
   getTeam(id: number): Promise<Team | undefined>;
-  createTeam(ownerId: string, team: CreateTeamRequest): Promise<Team>;
+  createTeam(workspaceId: string, ownerId: string, team: CreateTeamRequest): Promise<Team>;
   updateTeam(id: number, updates: UpdateTeamRequest): Promise<Team>;
   deleteTeam(id: number): Promise<void>;
   getTeamMembers(teamId: number): Promise<TeamMember[]>;
@@ -60,30 +83,30 @@ export interface IStorage {
   removeTeamMember(teamId: number, userId: string): Promise<void>;
   getUserTeamIds(userId: string): Promise<number[]>;
 
-  getCalendarConnectionsByTenant(tenantId: string): Promise<CalendarConnection[]>;
-  getCalendarResourcesByTenant(tenantId: string): Promise<CalendarResource[]>;
+  getCalendarConnectionsByTenant(workspaceId: string): Promise<CalendarConnection[]>;
+  getCalendarResourcesByTenant(workspaceId: string): Promise<CalendarResource[]>;
   getCalendarConnection(id: number): Promise<CalendarConnection | undefined>;
   getCalendarResource(id: number): Promise<CalendarResource | undefined>;
   getCalendarResourceWithConnection(id: number): Promise<{ resource: CalendarResource; connection: CalendarConnection } | undefined>;
-  createCalendarConnection(tenantId: string, input: CreateCalendarConnectionRequest): Promise<CalendarConnection>;
+  createCalendarConnection(workspaceId: string, input: CreateCalendarConnectionRequest): Promise<CalendarConnection>;
   updateCalendarConnection(id: number, updates: Partial<CalendarConnection>): Promise<CalendarConnection>;
   deleteCalendarConnection(id: number): Promise<void>;
-  createCalendarResource(tenantId: string, input: CreateCalendarResourceRequest): Promise<CalendarResource>;
+  createCalendarResource(workspaceId: string, input: CreateCalendarResourceRequest): Promise<CalendarResource>;
   createConnectionWithResource(
-    tenantId: string,
+    workspaceId: string,
     connectionInput: CreateCalendarConnectionRequest,
     resourceInput: Omit<CreateCalendarResourceRequest, "connectionId">,
   ): Promise<{ connection: CalendarConnection; resource: CalendarResource }>;
 
   getSpaces(): Promise<Space[]>;
   getSpace(id: number): Promise<Space | undefined>;
-  createSpace(tenantId: string, space: CreateSpaceRequest): Promise<Space>;
+  createSpace(workspaceId: string, space: CreateSpaceRequest): Promise<Space>;
   updateSpace(id: number, updates: UpdateSpaceRequest): Promise<Space>;
   deleteSpace(id: number): Promise<void>;
 
   getServices(): Promise<Service[]>;
   getService(id: number): Promise<Service | undefined>;
-  createService(tenantId: string, service: CreateServiceRequest): Promise<Service>;
+  createService(workspaceId: string, service: CreateServiceRequest): Promise<Service>;
   updateService(id: number, updates: UpdateServiceRequest): Promise<Service>;
   deleteService(id: number): Promise<void>;
 
@@ -110,7 +133,7 @@ export interface IStorage {
 
   getInventoryItems(): Promise<InventoryItem[]>;
   getInventoryItem(id: number): Promise<InventoryItem | undefined>;
-  createInventoryItem(ownerId: string, item: CreateInventoryItemRequest): Promise<InventoryItem>;
+  createInventoryItem(workspaceId: string, item: CreateInventoryItemRequest): Promise<InventoryItem>;
   updateInventoryItem(id: number, updates: UpdateInventoryItemRequest): Promise<InventoryItem>;
   deleteInventoryItem(id: number): Promise<void>;
 
@@ -119,7 +142,10 @@ export interface IStorage {
   updateInventoryHire(id: number, updates: UpdateInventoryHireRequest): Promise<InventoryHire>;
 
   getEmailSettings(): Promise<EmailSettings | undefined>;
-  upsertEmailSettings(settings: Omit<EmailSettings, "id" | "lastTestedAt" | "lastTestStatus" | "lastTestError" | "updatedAt"> & Partial<Pick<EmailSettings, "lastTestedAt" | "lastTestStatus" | "lastTestError">>): Promise<EmailSettings>;
+  upsertEmailSettings(
+    settings: Omit<EmailSettings, "id" | "lastTestedAt" | "lastTestStatus" | "lastTestError" | "updatedAt"> &
+      Partial<Pick<EmailSettings, "lastTestedAt" | "lastTestStatus" | "lastTestError">>,
+  ): Promise<EmailSettings>;
   updateEmailSettingsStatus(updates: Partial<Pick<EmailSettings, "lastTestedAt" | "lastTestStatus" | "lastTestError" | "enabled">>): Promise<EmailSettings | undefined>;
 
   createBookingReminder(reminder: CreateBookingEmailReminderRequest): Promise<BookingEmailReminder>;
@@ -131,33 +157,160 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  async getProfile(userId: string): Promise<UserProfile | undefined> {
-    const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
-    return profile;
+  async getProfile(workspaceId: string): Promise<Workspace | undefined> {
+    return this.getWorkspace(workspaceId);
   }
 
-  async getProfileBySlug(publicSlug: string): Promise<UserProfile | undefined> {
-    const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.publicSlug, publicSlug));
-    return profile;
+  async getProfileBySlug(publicSlug: string): Promise<Workspace | undefined> {
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.publicSlug, publicSlug));
+    return workspace;
   }
 
-  async upsertProfile(userId: string, profile: Partial<UserProfile>): Promise<UserProfile> {
-    const [existing] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
+  async upsertProfile(workspaceId: string, profile: Partial<Workspace>): Promise<Workspace> {
+    const existing = await this.getWorkspace(workspaceId);
     if (existing) {
-      const [updated] = await db.update(userProfiles).set(profile).where(eq(userProfiles.userId, userId)).returning();
+      const [updated] = await db
+        .update(workspaces)
+        .set({ ...profile, updatedAt: new Date() })
+        .where(eq(workspaces.id, workspaceId))
+        .returning();
       return updated;
     }
 
-    const [created] = await db.insert(userProfiles).values({ userId, role: "tenant", ...profile }).returning();
+    const [created] = await db
+      .insert(workspaces)
+      .values({
+        id: workspaceId,
+        studioId: "justso-studios",
+        name: profile.name || profile.displayName || "Untitled Workspace",
+        displayName: profile.displayName || profile.name || "Untitled Workspace",
+        publicSlug: profile.publicSlug || workspaceId,
+        createdByUserId: profile.createdByUserId || null,
+        ...profile,
+      })
+      .returning();
     return created;
+  }
+
+  async getWorkspace(workspaceId: string): Promise<Workspace | undefined> {
+    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    return workspace;
+  }
+
+  async getWorkspacesForUser(userId: string): Promise<Array<Workspace & { membershipRole: string | null }>> {
+    const memberships = await db.select().from(workspaceMemberships).where(eq(workspaceMemberships.userId, userId));
+    const results: Array<(Workspace & { membershipRole: string | null }) | null> = await Promise.all(
+      memberships.map(async (membership) => {
+        const workspace = await this.getWorkspace(membership.workspaceId);
+        return workspace ? { ...workspace, membershipRole: membership.role } : null;
+      }),
+    );
+    return results.filter(Boolean) as Array<Workspace & { membershipRole: string | null }>;
+  }
+
+  async createWorkspace(userId: string, workspace: CreateWorkspaceRequest): Promise<Workspace> {
+    const workspaceId = randomUUID();
+    const [created] = await db
+      .insert(workspaces)
+      .values({
+        ...workspace,
+        id: workspaceId,
+        studioId: "justso-studios",
+        name: workspace.name || workspace.displayName || "Untitled Workspace",
+        displayName: workspace.displayName || workspace.name || "Untitled Workspace",
+        publicSlug: workspace.publicSlug || workspaceId,
+        createdByUserId: userId,
+      })
+      .returning();
+    await this.addWorkspaceMembership(created.id, userId, "owner");
+    return created;
+  }
+
+  async updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Promise<Workspace> {
+    const [updated] = await db
+      .update(workspaces)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId))
+      .returning();
+    return updated;
+  }
+
+  async getWorkspaceMembership(workspaceId: string, userId: string): Promise<WorkspaceMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(workspaceMemberships)
+      .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, userId)));
+    return membership;
+  }
+
+  async addWorkspaceMembership(workspaceId: string, userId: string, role = "member"): Promise<WorkspaceMembership> {
+    const existing = await this.getWorkspaceMembership(workspaceId, userId);
+    if (existing) {
+      const [updated] = await db
+        .update(workspaceMemberships)
+        .set({ role, updatedAt: new Date() })
+        .where(eq(workspaceMemberships.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db
+      .insert(workspaceMemberships)
+      .values({ workspaceId, userId, role, updatedAt: new Date() })
+      .returning();
+    return created;
+  }
+
+  async getWorkspaceInvites(): Promise<WorkspaceInvite[]> {
+    return db.select().from(workspaceInvites).orderBy(desc(workspaceInvites.createdAt));
+  }
+
+  async getWorkspaceInvite(id: number): Promise<WorkspaceInvite | undefined> {
+    const [invite] = await db.select().from(workspaceInvites).where(eq(workspaceInvites.id, id));
+    return invite;
+  }
+
+  async getWorkspaceInviteByToken(token: string): Promise<WorkspaceInvite | undefined> {
+    const [invite] = await db.select().from(workspaceInvites).where(eq(workspaceInvites.token, token));
+    return invite;
+  }
+
+  async getWorkspaceInvitesByWorkspace(workspaceId: string): Promise<WorkspaceInvite[]> {
+    return db.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspaceId)).orderBy(desc(workspaceInvites.createdAt));
+  }
+
+  async createWorkspaceInvite(inviterUserId: string, invite: CreateWorkspaceInviteRequest): Promise<WorkspaceInvite> {
+    const [created] = await db
+      .insert(workspaceInvites)
+      .values({
+        workspaceId: invite.workspaceId,
+        inviterUserId,
+        email: invite.email.toLowerCase(),
+        role: invite.role,
+        token: randomUUID(),
+        expiresAt: invite.expiresAt,
+        status: "pending",
+        updatedAt: new Date(),
+      })
+      .returning();
+    return created;
+  }
+
+  async updateWorkspaceInvite(id: number, updates: Partial<WorkspaceInvite>): Promise<WorkspaceInvite> {
+    const [updated] = await db
+      .update(workspaceInvites)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(workspaceInvites.id, id))
+      .returning();
+    return updated;
   }
 
   async getTeams(): Promise<Team[]> {
     return db.select().from(teams);
   }
 
-  async getTeamsByOwner(ownerId: string): Promise<Team[]> {
-    return db.select().from(teams).where(eq(teams.ownerId, ownerId));
+  async getTeamsByWorkspace(workspaceId: string): Promise<Team[]> {
+    return db.select().from(teams).where(eq(teams.workspaceId, workspaceId));
   }
 
   async getTeam(id: number): Promise<Team | undefined> {
@@ -165,8 +318,8 @@ export class DatabaseStorage implements IStorage {
     return team;
   }
 
-  async createTeam(ownerId: string, team: CreateTeamRequest): Promise<Team> {
-    const [created] = await db.insert(teams).values({ ...team, ownerId }).returning();
+  async createTeam(workspaceId: string, ownerId: string, team: CreateTeamRequest): Promise<Team> {
+    const [created] = await db.insert(teams).values({ ...team, workspaceId, ownerId }).returning();
     await db.insert(teamMembers).values({ teamId: created.id, userId: ownerId, role: "manager" });
     return created;
   }
@@ -195,7 +348,6 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return updated;
     }
-
     const [created] = await db.insert(teamMembers).values({ teamId, userId, role }).returning();
     return created;
   }
@@ -209,12 +361,12 @@ export class DatabaseStorage implements IStorage {
     return memberships.map((membership) => membership.teamId);
   }
 
-  async getCalendarConnectionsByTenant(tenantId: string): Promise<CalendarConnection[]> {
-    return db.select().from(calendarConnections).where(eq(calendarConnections.tenantId, tenantId));
+  async getCalendarConnectionsByTenant(workspaceId: string): Promise<CalendarConnection[]> {
+    return db.select().from(calendarConnections).where(eq(calendarConnections.tenantId, workspaceId));
   }
 
-  async getCalendarResourcesByTenant(tenantId: string): Promise<CalendarResource[]> {
-    return db.select().from(calendarResources).where(eq(calendarResources.tenantId, tenantId));
+  async getCalendarResourcesByTenant(workspaceId: string): Promise<CalendarResource[]> {
+    return db.select().from(calendarResources).where(eq(calendarResources.tenantId, workspaceId));
   }
 
   async getCalendarConnection(id: number): Promise<CalendarConnection | undefined> {
@@ -229,20 +381,14 @@ export class DatabaseStorage implements IStorage {
 
   async getCalendarResourceWithConnection(id: number): Promise<{ resource: CalendarResource; connection: CalendarConnection } | undefined> {
     const resource = await this.getCalendarResource(id);
-    if (!resource) {
-      return undefined;
-    }
-
+    if (!resource) return undefined;
     const connection = await this.getCalendarConnection(resource.connectionId);
-    if (!connection) {
-      return undefined;
-    }
-
+    if (!connection) return undefined;
     return { resource, connection };
   }
 
-  async createCalendarConnection(tenantId: string, input: CreateCalendarConnectionRequest): Promise<CalendarConnection> {
-    const [created] = await db.insert(calendarConnections).values({ ...input, tenantId }).returning();
+  async createCalendarConnection(workspaceId: string, input: CreateCalendarConnectionRequest): Promise<CalendarConnection> {
+    const [created] = await db.insert(calendarConnections).values({ ...input, tenantId: workspaceId }).returning();
     return created;
   }
 
@@ -256,18 +402,18 @@ export class DatabaseStorage implements IStorage {
     await db.delete(calendarConnections).where(eq(calendarConnections.id, id));
   }
 
-  async createCalendarResource(tenantId: string, input: CreateCalendarResourceRequest): Promise<CalendarResource> {
-    const [created] = await db.insert(calendarResources).values({ ...input, tenantId }).returning();
+  async createCalendarResource(workspaceId: string, input: CreateCalendarResourceRequest): Promise<CalendarResource> {
+    const [created] = await db.insert(calendarResources).values({ ...input, tenantId: workspaceId }).returning();
     return created;
   }
 
   async createConnectionWithResource(
-    tenantId: string,
+    workspaceId: string,
     connectionInput: CreateCalendarConnectionRequest,
     resourceInput: Omit<CreateCalendarResourceRequest, "connectionId">,
   ): Promise<{ connection: CalendarConnection; resource: CalendarResource }> {
-    const connection = await this.createCalendarConnection(tenantId, connectionInput);
-    const resource = await this.createCalendarResource(tenantId, { ...resourceInput, connectionId: connection.id });
+    const connection = await this.createCalendarConnection(workspaceId, connectionInput);
+    const resource = await this.createCalendarResource(workspaceId, { ...resourceInput, connectionId: connection.id });
     return { connection, resource };
   }
 
@@ -280,8 +426,8 @@ export class DatabaseStorage implements IStorage {
     return space;
   }
 
-  async createSpace(tenantId: string, space: CreateSpaceRequest): Promise<Space> {
-    const [created] = await db.insert(spaces).values({ ...space, tenantId }).returning();
+  async createSpace(workspaceId: string, space: CreateSpaceRequest): Promise<Space> {
+    const [created] = await db.insert(spaces).values({ ...space, tenantId: workspaceId }).returning();
     return created;
   }
 
@@ -303,8 +449,8 @@ export class DatabaseStorage implements IStorage {
     return service;
   }
 
-  async createService(tenantId: string, service: CreateServiceRequest): Promise<Service> {
-    const [created] = await db.insert(services).values({ ...service, tenantId }).returning();
+  async createService(workspaceId: string, service: CreateServiceRequest): Promise<Service> {
+    const [created] = await db.insert(services).values({ ...service, tenantId: workspaceId }).returning();
     return created;
   }
 
@@ -378,9 +524,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteVerificationCodesForBooking(email: string, bookingId: number): Promise<void> {
-    await db
-      .delete(emailVerificationCodes)
-      .where(and(eq(emailVerificationCodes.email, email), eq(emailVerificationCodes.bookingId, bookingId)));
+    await db.delete(emailVerificationCodes).where(and(eq(emailVerificationCodes.email, email), eq(emailVerificationCodes.bookingId, bookingId)));
   }
 
   async getInventoryItems(): Promise<InventoryItem[]> {
@@ -392,8 +536,8 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
-  async createInventoryItem(ownerId: string, item: CreateInventoryItemRequest): Promise<InventoryItem> {
-    const [created] = await db.insert(inventoryItems).values({ ...item, ownerId }).returning();
+  async createInventoryItem(workspaceId: string, item: CreateInventoryItemRequest): Promise<InventoryItem> {
+    const [created] = await db.insert(inventoryItems).values({ ...item, ownerId: workspaceId }).returning();
     return created;
   }
 
@@ -438,7 +582,6 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return updated;
     }
-
     const [created] = await db.insert(emailSettings).values({ ...settings, updatedAt: new Date() }).returning();
     return created;
   }
@@ -447,9 +590,7 @@ export class DatabaseStorage implements IStorage {
     updates: Partial<Pick<EmailSettings, "lastTestedAt" | "lastTestStatus" | "lastTestError" | "enabled">>,
   ): Promise<EmailSettings | undefined> {
     const existing = await this.getEmailSettings();
-    if (!existing) {
-      return undefined;
-    }
+    if (!existing) return undefined;
     const [updated] = await db
       .update(emailSettings)
       .set({ ...updates, updatedAt: new Date() })

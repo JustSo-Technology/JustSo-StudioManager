@@ -15,11 +15,17 @@ export const sessions = pgTable(
 // User storage table for the app's session-backed auth/user records.
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique(),
+  email: varchar("email").notNull().unique(),
+  username: varchar("username").notNull().unique(),
   passwordHash: varchar("password_hash"),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
+  fullName: varchar("full_name"),
   profileImageUrl: varchar("profile_image_url"),
+  appRole: varchar("app_role").notNull().default("member"),
+  authentikIssuer: varchar("authentik_issuer"),
+  authentikSubject: varchar("authentik_subject"),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
