@@ -466,6 +466,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/login-demo", async (req: any, res) => {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(404).json({ message: "Not found" });
+    }
+
     const demoUser = {
       id: "demo-user-123",
       firstName: "Demo",
@@ -490,6 +494,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/login-demo-admin", async (req: any, res) => {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(404).json({ message: "Not found" });
+    }
+
     const demoUser = {
       id: "demo-admin-123",
       firstName: "Demo",
@@ -519,8 +527,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/logout", (req: any, res) => {
-    req.session.user = null;
-    res.json({ message: "Logged out" });
+    const finish = () => {
+      req.session?.destroy?.(() => {
+        res.clearCookie("connect.sid");
+        res.json({ message: "Logged out" });
+      });
+    };
+
+    if (req.logout) {
+      req.logout(finish);
+      return;
+    }
+
+    finish();
   });
 
   app.get(api.admin.emailSettings.get.path, requireAuth, async (req: any, res) => {

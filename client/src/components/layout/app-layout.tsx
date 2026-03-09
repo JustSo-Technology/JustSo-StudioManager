@@ -1,12 +1,17 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading, login, isLoggingIn, loginAdmin, isLoggingInAdmin } = useAuth();
+  const { isAuthenticated, isLoading, signIn, isSigningIn, signUp, isSigningUp, loginAdmin, isLoggingInAdmin } = useAuth();
+  const [studioName, setStudioName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
 
   if (isLoading) {
     return (
@@ -30,13 +35,60 @@ export function AppLayout({ children }: { children: ReactNode }) {
             className="mx-auto mb-6 h-auto w-full max-w-[760px] object-contain"
           />
           <p className="text-muted-foreground mb-8">Tenant backend for publishing, bookings, spaces, and equipment.</p>
-          <div className="mx-auto max-w-md">
+          <div className="mx-auto max-w-md space-y-3">
+            <Input
+              className="h-12 rounded-xl bg-background"
+              placeholder="Studio name"
+              value={studioName}
+              onChange={(event) => setStudioName(event.target.value)}
+            />
+            <Input
+              className="h-12 rounded-xl bg-background"
+              type="email"
+              placeholder="Email address"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <Input
+              className="h-12 rounded-xl bg-background"
+              type="password"
+              placeholder="Password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            {authError ? <p className="text-sm text-destructive">{authError}</p> : null}
             <Button 
               className="w-full h-12 text-base rounded-xl"
-              onClick={() => login?.()}
-              disabled={isLoggingIn}
+              onClick={() =>
+                signIn(
+                  { email, password },
+                  {
+                    onError: (error) => setAuthError(error.message),
+                    onSuccess: () => setAuthError(""),
+                  },
+                )
+              }
+              disabled={isSigningIn || isSigningUp}
             >
-              {isLoggingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in to continue"}
+              {isSigningIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in to continue"}
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full h-12 rounded-xl"
+              onClick={() =>
+                signUp(
+                  { studioName, email, password },
+                  {
+                    onError: (error) => setAuthError(error.message),
+                    onSuccess: () => setAuthError(""),
+                  },
+                )
+              }
+              disabled={isSigningIn || isSigningUp}
+            >
+              {isSigningUp ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create studio account"}
             </Button>
             {import.meta.env.DEV && (
               <Button
