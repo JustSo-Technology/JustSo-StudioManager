@@ -1,5 +1,7 @@
 # JustSo. Studio Manager
 
+!! NOT READY FOR PRODUCTION YET !!
+
 Booking, services, and inventory management for a creative studio workspace.
 
 ## Stack
