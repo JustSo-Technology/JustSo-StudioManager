@@ -37,6 +37,7 @@ export function useAuth() {
     mutationFn: logout,
     onSuccess: () => {
       queryClient.setQueryData(["/api/auth/user"], null);
+      queryClient.removeQueries();
       window.location.reload();
     },
   });
@@ -50,7 +51,20 @@ export function useAuth() {
       if (!response.ok) throw new Error("Login failed");
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      queryClient.invalidateQueries();
+    }
+  });
+
+  const loginAdminMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/login-demo-admin", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Admin login failed");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries();
     }
   });
 
@@ -62,5 +76,7 @@ export function useAuth() {
     isLoggingOut: logoutMutation.isPending,
     login: loginMutation.mutate,
     isLoggingIn: loginMutation.isPending,
+    loginAdmin: loginAdminMutation.mutate,
+    isLoggingInAdmin: loginAdminMutation.isPending,
   };
 }
