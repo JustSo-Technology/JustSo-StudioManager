@@ -1,189 +1,295 @@
-import { z } from 'zod';
-import { 
-  insertSpaceSchema, insertServiceSchema, insertBookingSchema, 
-  insertInventoryItemSchema, insertInventoryHireSchema, insertUserProfileSchema,
-  insertTeamSchema, insertTeamMemberSchema,
-  spaces, services, bookings, inventoryItems, inventoryHires, userProfiles, teams, teamMembers
-} from './schema';
+import { z } from "zod";
+import {
+  bookings,
+  bookingEmailReminders,
+  calendarConnections,
+  calendarResources,
+  emailSettings,
+  inventoryHires,
+  inventoryItems,
+  insertBookingSchema,
+  insertCalendarConnectionSchema,
+  insertCalendarResourceSchema,
+  insertInventoryHireSchema,
+  insertInventoryItemSchema,
+  insertServiceSchema,
+  insertSpaceSchema,
+  insertTeamMemberSchema,
+  insertTeamSchema,
+  insertUserProfileSchema,
+  services,
+  spaces,
+  teamMembers,
+  teams,
+  userProfiles,
+} from "./schema";
 
 export const errorSchemas = {
   validation: z.object({ message: z.string(), field: z.string().optional() }),
   notFound: z.object({ message: z.string() }),
   unauthorized: z.object({ message: z.string() }),
+  forbidden: z.object({ message: z.string() }),
 };
 
 export const api = {
   profiles: {
     me: {
-      method: 'GET' as const,
-      path: '/api/profiles/me' as const,
+      method: "GET" as const,
+      path: "/api/profiles/me" as const,
       responses: {
         200: z.custom<typeof userProfiles.$inferSelect>(),
         404: errorSchemas.notFound,
-      }
+      },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/profiles/me' as const,
+      method: "PUT" as const,
+      path: "/api/profiles/me" as const,
       input: insertUserProfileSchema.partial(),
       responses: {
         200: z.custom<typeof userProfiles.$inferSelect>(),
         400: errorSchemas.validation,
-      }
-    }
+      },
+    },
   },
   teams: {
     list: {
-      method: 'GET' as const,
-      path: '/api/teams' as const,
-      responses: { 200: z.array(z.custom<typeof teams.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/teams" as const,
+      responses: { 200: z.array(z.custom<typeof teams.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/teams' as const,
+      method: "POST" as const,
+      path: "/api/teams" as const,
       input: insertTeamSchema,
-      responses: { 201: z.custom<typeof teams.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof teams.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/teams/:id' as const,
+      method: "PUT" as const,
+      path: "/api/teams/:id" as const,
       input: insertTeamSchema.partial(),
-      responses: { 200: z.custom<typeof teams.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
+      responses: { 200: z.custom<typeof teams.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
     },
     delete: {
-      method: 'DELETE' as const,
-      path: '/api/teams/:id' as const,
-      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound }
+      method: "DELETE" as const,
+      path: "/api/teams/:id" as const,
+      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound },
     },
     members: {
       list: {
-        method: 'GET' as const,
-        path: '/api/teams/:id/members' as const,
-        responses: { 200: z.array(z.custom<typeof teamMembers.$inferSelect>()) }
+        method: "GET" as const,
+        path: "/api/teams/:id/members" as const,
+        responses: { 200: z.array(z.custom<typeof teamMembers.$inferSelect>()) },
       },
       add: {
-        method: 'POST' as const,
-        path: '/api/teams/:id/members' as const,
+        method: "POST" as const,
+        path: "/api/teams/:id/members" as const,
         input: z.object({ userId: z.string(), role: z.string().optional() }),
-        responses: { 201: z.custom<typeof teamMembers.$inferSelect>(), 400: errorSchemas.validation }
+        responses: { 201: z.custom<typeof teamMembers.$inferSelect>(), 400: errorSchemas.validation },
       },
       remove: {
-        method: 'DELETE' as const,
-        path: '/api/teams/:id/members/:userId' as const,
-        responses: { 200: z.object({ message: z.string() }) }
-      }
-    }
+        method: "DELETE" as const,
+        path: "/api/teams/:id/members/:userId" as const,
+        responses: { 200: z.object({ message: z.string() }) },
+      },
+    },
+  },
+  calendars: {
+    connections: {
+      list: {
+        method: "GET" as const,
+        path: "/api/calendars/connections" as const,
+        responses: { 200: z.array(z.custom<typeof calendarConnections.$inferSelect>()) },
+      },
+      create: {
+        method: "POST" as const,
+        path: "/api/calendars/connections" as const,
+        input: insertCalendarConnectionSchema.extend({
+          resourceName: z.string().min(1, "Resource name is required"),
+          resourceColor: z.string().optional(),
+        }),
+        responses: { 201: z.custom<typeof calendarConnections.$inferSelect>(), 400: errorSchemas.validation },
+      },
+      delete: {
+        method: "DELETE" as const,
+        path: "/api/calendars/connections/:id" as const,
+        responses: { 200: z.object({ message: z.string() }) },
+      },
+    },
+    resources: {
+      list: {
+        method: "GET" as const,
+        path: "/api/calendars/resources" as const,
+        responses: { 200: z.array(z.custom<typeof calendarResources.$inferSelect>()) },
+      },
+      create: {
+        method: "POST" as const,
+        path: "/api/calendars/resources" as const,
+        input: insertCalendarResourceSchema,
+        responses: { 201: z.custom<typeof calendarResources.$inferSelect>(), 400: errorSchemas.validation },
+      },
+    },
   },
   spaces: {
     list: {
-      method: 'GET' as const,
-      path: '/api/spaces' as const,
-      responses: { 200: z.array(z.custom<typeof spaces.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/spaces" as const,
+      responses: { 200: z.array(z.custom<typeof spaces.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/spaces' as const,
+      method: "POST" as const,
+      path: "/api/spaces" as const,
       input: insertSpaceSchema,
-      responses: { 201: z.custom<typeof spaces.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof spaces.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/spaces/:id' as const,
+      method: "PUT" as const,
+      path: "/api/spaces/:id" as const,
       input: insertSpaceSchema.partial(),
-      responses: { 200: z.custom<typeof spaces.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
+      responses: { 200: z.custom<typeof spaces.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
     },
     delete: {
-      method: 'DELETE' as const,
-      path: '/api/spaces/:id' as const,
-      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound }
-    }
+      method: "DELETE" as const,
+      path: "/api/spaces/:id" as const,
+      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound },
+    },
   },
   services: {
     list: {
-      method: 'GET' as const,
-      path: '/api/services' as const,
-      responses: { 200: z.array(z.custom<typeof services.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/services" as const,
+      responses: { 200: z.array(z.custom<typeof services.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/services' as const,
+      method: "POST" as const,
+      path: "/api/services" as const,
       input: insertServiceSchema,
-      responses: { 201: z.custom<typeof services.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof services.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/services/:id' as const,
+      method: "PUT" as const,
+      path: "/api/services/:id" as const,
       input: insertServiceSchema.partial(),
-      responses: { 200: z.custom<typeof services.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
+      responses: { 200: z.custom<typeof services.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
     },
     delete: {
-      method: 'DELETE' as const,
-      path: '/api/services/:id' as const,
-      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound }
-    }
+      method: "DELETE" as const,
+      path: "/api/services/:id" as const,
+      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound },
+    },
   },
   bookings: {
     list: {
-      method: 'GET' as const,
-      path: '/api/bookings' as const,
-      responses: { 200: z.array(z.custom<typeof bookings.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/bookings" as const,
+      responses: { 200: z.array(z.custom<typeof bookings.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/bookings' as const,
+      method: "POST" as const,
+      path: "/api/bookings" as const,
       input: insertBookingSchema,
-      responses: { 201: z.custom<typeof bookings.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof bookings.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/bookings/:id' as const,
+      method: "PUT" as const,
+      path: "/api/bookings/:id" as const,
       input: insertBookingSchema.partial(),
-      responses: { 200: z.custom<typeof bookings.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
-    }
+      responses: { 200: z.custom<typeof bookings.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
+    },
   },
   inventory: {
     list: {
-      method: 'GET' as const,
-      path: '/api/inventory' as const,
-      responses: { 200: z.array(z.custom<typeof inventoryItems.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/inventory" as const,
+      responses: { 200: z.array(z.custom<typeof inventoryItems.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/inventory' as const,
+      method: "POST" as const,
+      path: "/api/inventory" as const,
       input: insertInventoryItemSchema,
-      responses: { 201: z.custom<typeof inventoryItems.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof inventoryItems.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/inventory/:id' as const,
+      method: "PUT" as const,
+      path: "/api/inventory/:id" as const,
       input: insertInventoryItemSchema.partial(),
-      responses: { 200: z.custom<typeof inventoryItems.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
+      responses: { 200: z.custom<typeof inventoryItems.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
     },
     delete: {
-      method: 'DELETE' as const,
-      path: '/api/inventory/:id' as const,
-      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound }
-    }
+      method: "DELETE" as const,
+      path: "/api/inventory/:id" as const,
+      responses: { 200: z.object({ message: z.string() }), 404: errorSchemas.notFound },
+    },
   },
   hires: {
     list: {
-      method: 'GET' as const,
-      path: '/api/hires' as const,
-      responses: { 200: z.array(z.custom<typeof inventoryHires.$inferSelect>()) }
+      method: "GET" as const,
+      path: "/api/hires" as const,
+      responses: { 200: z.array(z.custom<typeof inventoryHires.$inferSelect>()) },
     },
     create: {
-      method: 'POST' as const,
-      path: '/api/hires' as const,
+      method: "POST" as const,
+      path: "/api/hires" as const,
       input: insertInventoryHireSchema,
-      responses: { 201: z.custom<typeof inventoryHires.$inferSelect>(), 400: errorSchemas.validation }
+      responses: { 201: z.custom<typeof inventoryHires.$inferSelect>(), 400: errorSchemas.validation },
     },
     update: {
-      method: 'PUT' as const,
-      path: '/api/hires/:id' as const,
+      method: "PUT" as const,
+      path: "/api/hires/:id" as const,
       input: insertInventoryHireSchema.partial(),
-      responses: { 200: z.custom<typeof inventoryHires.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound }
-    }
-  }
+      responses: { 200: z.custom<typeof inventoryHires.$inferSelect>(), 400: errorSchemas.validation, 404: errorSchemas.notFound },
+    },
+  },
+  admin: {
+    emailSettings: {
+      get: {
+        method: "GET" as const,
+        path: "/api/admin/email-settings" as const,
+        responses: { 200: z.custom<typeof emailSettings.$inferSelect | null>() },
+      },
+      update: {
+        method: "PUT" as const,
+        path: "/api/admin/email-settings" as const,
+        input: z.object({
+          smtpHost: z.string().min(1),
+          smtpPort: z.coerce.number().int().min(1).max(65535),
+          smtpUsername: z.string().min(1),
+          smtpPassword: z.string().optional().or(z.literal("")),
+          securityMode: z.enum(["none", "starttls", "ssl"]),
+          fromName: z.string().min(1),
+          fromEmail: z.string().email(),
+          replyToEmail: z.string().email().optional().or(z.literal("")),
+          enabled: z.boolean(),
+        }),
+        responses: { 200: z.custom<typeof emailSettings.$inferSelect>(), 400: errorSchemas.validation },
+      },
+      test: {
+        method: "POST" as const,
+        path: "/api/admin/email-settings/test" as const,
+        input: z.object({ email: z.string().email() }),
+        responses: { 200: z.object({ message: z.string() }), 400: errorSchemas.validation },
+      },
+      health: {
+        method: "GET" as const,
+        path: "/api/admin/email-settings/health" as const,
+        responses: {
+          200: z.object({
+            configured: z.boolean(),
+            enabled: z.boolean(),
+            pendingReminders: z.number(),
+            failedReminders: z.number(),
+            lastReminderError: z.string().nullable(),
+            lastTestedAt: z.string().nullable(),
+            lastTestStatus: z.string().nullable(),
+          }),
+        },
+      },
+      reminders: {
+        method: "GET" as const,
+        path: "/api/admin/email-reminders" as const,
+        responses: { 200: z.array(z.custom<typeof bookingEmailReminders.$inferSelect>()) },
+      },
+    },
+  },
 };
 
 export function buildUrl(path: string, params?: Record<string, string | number>): string {

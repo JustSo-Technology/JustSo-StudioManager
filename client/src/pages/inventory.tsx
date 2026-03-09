@@ -16,12 +16,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { insertInventoryItemSchema, type InventoryItem } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { TeamVisibilityFields, VisibilityBadge } from "@/components/team-visibility-fields";
+import { CalendarResourceSelect } from "@/components/calendar-resource-select";
 
 const formSchema = insertInventoryItemSchema.extend({
   isAvailableForHire: z.boolean().default(false),
   storageLocationId: z.number().nullable().optional(),
   teamId: z.number().nullable().optional(),
   visibility: z.string().default("team"),
+  calendarResourceId: z.number().nullable().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -129,6 +131,7 @@ function InventoryFormFields({ form }: { form: ReturnType<typeof useForm<FormVal
           </FormItem>
         )}
       />
+      {form.watch("isAvailableForHire") && <CalendarResourceSelect form={form} label="Hire calendar" />}
       <TeamVisibilityFields form={form} />
     </>
   );
@@ -149,6 +152,7 @@ function EditInventoryDialog({ item, onClose }: { item: InventoryItem; onClose: 
       storageLocationId: item.storageLocationId ?? null,
       teamId: item.teamId ?? null,
       visibility: item.visibility || "team",
+      calendarResourceId: item.calendarResourceId ?? null,
     },
   });
 
@@ -200,6 +204,7 @@ export default function Inventory() {
       storageLocationId: null,
       teamId: null,
       visibility: "team",
+      calendarResourceId: null,
     },
   });
 

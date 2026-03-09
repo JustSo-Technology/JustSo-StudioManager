@@ -17,6 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { insertSpaceSchema, type Space } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { TeamVisibilityFields, VisibilityBadge } from "@/components/team-visibility-fields";
+import { CalendarResourceSelect } from "@/components/calendar-resource-select";
 
 const formSchema = insertSpaceSchema.extend({
   capacity: z.coerce.number().optional(),
@@ -26,6 +27,7 @@ const formSchema = insertSpaceSchema.extend({
   isBookable: z.boolean().default(true),
   teamId: z.number().nullable().optional(),
   visibility: z.string().default("all_tenants"),
+  calendarResourceId: z.number().nullable().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -230,6 +232,7 @@ function SpaceFormFields({ form, spaces, editingSpaceId }: { form: ReturnType<ty
           </FormItem>
         )}
       />
+      {form.watch("isBookable") && <CalendarResourceSelect form={form} />}
       <TeamVisibilityFields form={form} />
     </>
   );
@@ -251,6 +254,7 @@ function EditSpaceDialog({ space, spaces, onClose }: { space: Space; spaces?: Sp
       isBookable: space.isBookable ?? true,
       teamId: space.teamId ?? null,
       visibility: space.visibility || "all_tenants",
+      calendarResourceId: space.calendarResourceId ?? null,
     },
   });
 
@@ -396,6 +400,7 @@ export default function Spaces() {
       isBookable: true,
       teamId: null,
       visibility: "all_tenants",
+      calendarResourceId: null,
     },
   });
 

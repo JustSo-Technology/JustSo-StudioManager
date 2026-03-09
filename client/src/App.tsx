@@ -7,6 +7,7 @@ import { AppLayout } from "./components/layout/app-layout";
 import NotFound from "@/pages/not-found";
 
 import Home from "./pages/home";
+import Calendars from "./pages/calendars";
 import Spaces from "./pages/spaces";
 import Services from "./pages/services";
 import Bookings from "./pages/bookings";
@@ -14,22 +15,33 @@ import Inventory from "./pages/inventory";
 import Hires from "./pages/hires";
 import Teams from "./pages/teams";
 import Profile from "./pages/profile";
+import PublicPage from "./pages/public-page";
+import TenantPublicPage from "./pages/tenant-public";
+import EmailSettingsPage from "./pages/email-settings";
 
 function Router() {
   return (
-    <AppLayout>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/teams" component={Teams} />
-        <Route path="/spaces" component={Spaces} />
-        <Route path="/services" component={Services} />
-        <Route path="/bookings" component={Bookings} />
-        <Route path="/inventory" component={Inventory} />
-        <Route path="/hires" component={Hires} />
-        <Route path="/profile" component={Profile} />
-        <Route component={NotFound} />
-      </Switch>
-    </AppLayout>
+    <Switch>
+      <Route path="/u/:slug" component={TenantPublicPage} />
+      <Route>
+        <AppLayout>
+          <Switch>
+            <Route path="/" component={Home} />
+            <Route path="/teams" component={Teams} />
+            <Route path="/spaces" component={Spaces} />
+            <Route path="/services" component={Services} />
+            <Route path="/bookings" component={Bookings} />
+            <Route path="/inventory" component={Inventory} />
+            <Route path="/hires" component={Hires} />
+            <Route path="/calendars" component={Calendars} />
+            <Route path="/public-page" component={PublicPage} />
+            <Route path="/settings/email" component={EmailSettingsPage} />
+            <Route path="/profile" component={Profile} />
+            <Route component={NotFound} />
+          </Switch>
+        </AppLayout>
+      </Route>
+    </Switch>
   );
 }
 

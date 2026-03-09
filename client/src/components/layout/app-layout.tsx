@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading, login, isLoggingIn } = useAuth();
+  const { isAuthenticated, isLoading, login, isLoggingIn, loginAdmin, isLoggingInAdmin } = useAuth();
 
   if (isLoading) {
     return (
@@ -23,16 +23,32 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[30%] h-[30%] bg-primary/10 rounded-full blur-3xl pointer-events-none" />
         
-        <div className="glass-panel p-10 rounded-3xl max-w-md w-full text-center relative z-10 shadow-2xl shadow-black/5">
-          <h1 className="font-display text-4xl font-bold mb-2">JustSo.</h1>
-          <p className="text-muted-foreground mb-8">Studio Booking & Inventory</p>
-          <Button 
-            className="w-full h-12 text-base rounded-xl"
-            onClick={() => login?.()}
-            disabled={isLoggingIn}
-          >
-            {isLoggingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in to continue"}
-          </Button>
+        <div className="glass-panel p-10 rounded-3xl max-w-3xl w-full text-center relative z-10 shadow-2xl shadow-black/5">
+          <img
+            src="/justso-logo.png"
+            alt="JustSo. Studio Manager"
+            className="mx-auto mb-6 h-auto w-full max-w-[760px] object-contain"
+          />
+          <p className="text-muted-foreground mb-8">Tenant backend for publishing, bookings, spaces, and equipment.</p>
+          <div className="mx-auto max-w-md">
+            <Button 
+              className="w-full h-12 text-base rounded-xl"
+              onClick={() => login?.()}
+              disabled={isLoggingIn}
+            >
+              {isLoggingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in to continue"}
+            </Button>
+            {import.meta.env.DEV && (
+              <Button
+                variant="outline"
+                className="mt-3 w-full h-12 rounded-xl"
+                onClick={() => loginAdmin?.()}
+                disabled={isLoggingInAdmin}
+              >
+                {isLoggingInAdmin ? <Loader2 className="h-4 w-4 animate-spin" /> : "Open local admin demo"}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     );

@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { TeamVisibilityFields, VisibilityBadge } from "@/components/team-visibility-fields";
 import { Autocomplete, useLoadScript } from "@react-google-maps/api";
 import { useQuery } from "@tanstack/react-query";
+import { CalendarResourceSelect } from "@/components/calendar-resource-select";
 
 const libraries: ("places")[] = ["places"];
 
@@ -38,6 +39,7 @@ const formSchema = insertServiceSchema.extend({
   durationMinutes: z.coerce.number().min(15, "Duration must be at least 15m"),
   teamId: z.number().nullable().optional(),
   visibility: z.string().default("public"),
+  calendarResourceId: z.number().nullable().optional(),
   locationType: z.string().nullable().optional(),
   locationSpaceId: z.number().nullable().optional(),
   locationAddress: z.string().nullable().optional(),
@@ -165,6 +167,8 @@ function ServiceFormFields({ form, googleMapsApiKey }: { form: ReturnType<typeof
         />
       </div>
 
+      <CalendarResourceSelect form={form} />
+
       <FormField
         control={form.control}
         name="locationType"
@@ -286,6 +290,7 @@ function EditServiceDialog({ service, onClose, googleMapsApiKey }: { service: Se
       durationMinutes: service.durationMinutes,
       teamId: service.teamId ?? null,
       visibility: service.visibility || "public",
+      calendarResourceId: service.calendarResourceId ?? null,
       locationType: service.locationType || null,
       locationSpaceId: service.locationSpaceId ?? null,
       locationAddress: service.locationAddress || null,
@@ -342,6 +347,7 @@ export default function Services() {
       durationMinutes: 60,
       teamId: null,
       visibility: "public",
+      calendarResourceId: null,
       locationType: null,
       locationSpaceId: null,
       locationAddress: null,
