@@ -191,7 +191,7 @@ export default function Inventory() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [deletingItem, setDeletingItem] = useState<InventoryItem | null>(null);
 
-  const canManage = profile?.role === "admin" || profile?.role === "tenant";
+  const canManage = !!profile;
 
   const createForm = useForm<FormValues>({
     resolver: zodResolver(formSchema),

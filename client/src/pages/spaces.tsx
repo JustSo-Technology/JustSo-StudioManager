@@ -379,7 +379,7 @@ export default function Spaces() {
   const [editingSpace, setEditingSpace] = useState<Space | null>(null);
   const [deletingSpace, setDeletingSpace] = useState<Space | null>(null);
 
-  const canManage = profile?.role === "admin" || profile?.role === "tenant";
+  const canManage = !!profile;
 
   const spaceTree = useMemo(() => {
     if (!spaces) return [];

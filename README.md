@@ -173,7 +173,7 @@ You will need:
 
 Example values:
 
-- `AUTH_ISSUER_URL=https://auth.justso.cloud/application/o/studio-manager/`
+- `AUTH_ISSUER_URL=https://sm-auth.justso.cloud/application/o/studio-manager/`
 - `AUTH_CLIENT_ID=<from Authentik>`
 - `AUTH_CLIENT_SECRET=<from Authentik>`
 - `AUTH_REDIRECT_URI=https://studiomanager.justso.cloud/api/auth/callback`

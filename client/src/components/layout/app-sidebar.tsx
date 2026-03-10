@@ -31,7 +31,7 @@ import { useProfile } from "@/hooks/use-profile";
 
 export function AppSidebar() {
   const [location] = useLocation();
-  const { logout, workspaces, activeWorkspaceId, switchWorkspace, isSwitchingWorkspace } = useAuth();
+  const { logout, organisations, activeOrganisationId, switchOrganisation, isSwitchingOrganisation } = useAuth();
   const { data: profile } = useProfile();
 
   const navigation = [
@@ -47,9 +47,9 @@ export function AppSidebar() {
   ];
 
   const adminNavigation =
-    profile?.role === "admin"
+    profile?.studioRole === "STUDIO_OWNER" || profile?.studioRole === "STUDIO_ADMIN"
       ? [
-          { title: "Workspace Access", url: "/access", icon: Users },
+          { title: "Organisation Access", url: "/access", icon: Users },
           { title: "Email Settings", url: "/settings/email", icon: Mail },
         ]
       : [];
@@ -68,21 +68,21 @@ export function AppSidebar() {
           <div className="rounded-2xl border border-border/60 bg-muted/40 px-3 py-3 text-sm">
             <div className="flex items-center gap-2 font-medium text-foreground">
               <BadgeCheck className="h-4 w-4 text-primary" />
-              {profile?.displayName || profile?.tenantName || "Workspace"}
+              {profile?.displayName || profile?.organisationName || profile?.tenantName || "Organisation"}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
               Publish your page, assign calendars to every offering, and keep reservations organised.
             </p>
-            {workspaces.length > 1 ? (
+            {organisations.length > 1 ? (
               <select
                 className="mt-3 h-10 w-full rounded-xl border border-border/70 bg-background px-3 text-sm"
-                value={activeWorkspaceId || ""}
-                onChange={(event) => switchWorkspace(event.target.value)}
-                disabled={isSwitchingWorkspace}
+                value={activeOrganisationId || ""}
+                onChange={(event) => switchOrganisation(event.target.value)}
+                disabled={isSwitchingOrganisation}
               >
-                {workspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.displayName || workspace.name}
+                {organisations.map((organisation) => (
+                  <option key={organisation.id} value={organisation.id}>
+                    {organisation.displayName || organisation.name}
                   </option>
                 ))}
               </select>
@@ -94,7 +94,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Tenant Workspace
+            Active Organisation
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -158,7 +158,7 @@ export function AppSidebar() {
             <SidebarMenuButton asChild className="rounded-xl">
               <Link href="/profile" className="flex items-center gap-3 px-3 py-2.5">
                 <User className="h-4 w-4 opacity-70" />
-                <span className="flex-1 truncate">Workspace Profile</span>
+                <span className="flex-1 truncate">Organisation Profile</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

@@ -12,7 +12,7 @@ export default function Hires() {
   const returnMutation = useUpdateHire();
   const { toast } = useToast();
 
-  const canManage = profile?.role === "admin" || profile?.role === "tenant";
+  const canManage = !!profile;
 
   function handleReturn(hireId: number) {
     returnMutation.mutate({ id: hireId, status: "returned" }, {

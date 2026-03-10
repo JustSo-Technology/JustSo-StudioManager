@@ -26,48 +26,55 @@ async function getAuthContext(req: any): Promise<any> {
     return null;
   }
 
-  const availableWorkspaces = await storage.getWorkspacesForUser(actorUserId);
-  const activeWorkspaceId =
-    req.session.activeWorkspaceId && availableWorkspaces.some((workspace) => workspace.id === req.session.activeWorkspaceId)
-      ? req.session.activeWorkspaceId
-      : availableWorkspaces[0]?.id;
+  const availableOrganisations = await storage.getWorkspacesForUser(actorUserId);
+  const studioRole = req.session.user?.studioRole || (req.session.user?.appRole === "admin" ? "STUDIO_OWNER" : "STUDIO_MEMBER");
+  const activeOrganisationId =
+    req.session.activeOrganisationId && availableOrganisations.some((organisation) => organisation.id === req.session.activeOrganisationId)
+      ? req.session.activeOrganisationId
+      : availableOrganisations[0]?.id;
 
-  if (!activeWorkspaceId) {
+  if (!activeOrganisationId) {
     return {
       userId: null,
       actorUserId,
       profile: null,
-      workspaceId: null,
-      membershipRole: null,
+      organisationId: null,
+      organisationRole: null,
       teamIds: await storage.getUserTeamIds(actorUserId),
-      workspaces: availableWorkspaces,
-      appRole: req.session.user?.appRole || "member",
+      organisations: availableOrganisations,
+      studioRole,
     };
   }
 
-  req.session.activeWorkspaceId = activeWorkspaceId;
-  const workspace = await storage.getProfile(activeWorkspaceId);
-  const membership = await storage.getWorkspaceMembership(activeWorkspaceId, actorUserId);
-  const profile = workspace
+  req.session.activeOrganisationId = activeOrganisationId;
+  const organisation = await storage.getProfile(activeOrganisationId);
+  const membership = await storage.getWorkspaceMembership(activeOrganisationId, actorUserId);
+  const profile = organisation
     ? {
-        ...workspace,
-        userId: workspace.id,
-        tenantName: workspace.name,
-        role: req.session.user?.appRole === "admin" ? "admin" : "tenant",
+        ...organisation,
+        userId: organisation.id,
+        organisationName: organisation.name,
+        tenantName: organisation.name,
+        role: studioRole === "STUDIO_OWNER" || studioRole === "STUDIO_ADMIN" ? "admin" : "tenant",
         membershipRole: membership?.role || null,
+        organisationRole: membership?.role || null,
+        studioRole,
       }
     : null;
 
   const teamIds = await storage.getUserTeamIds(actorUserId);
   return {
-    userId: activeWorkspaceId,
+    userId: activeOrganisationId,
     actorUserId,
     profile,
-    workspaceId: activeWorkspaceId,
+    organisationId: activeOrganisationId,
+    workspaceId: activeOrganisationId,
     membershipRole: membership?.role || null,
+    organisationRole: membership?.role || null,
     teamIds,
-    workspaces: availableWorkspaces,
-    appRole: req.session.user?.appRole || "member",
+    organisations: availableOrganisations,
+    workspaces: availableOrganisations,
+    studioRole,
   };
 }
 
@@ -113,7 +120,7 @@ async function canManageTeamResource(
   teamId: number | null,
   role: string | undefined,
   actorUserId: string,
-  workspaceId: string,
+  organisationId: string,
   userTeamIds: number[],
   resourceOwnerId?: string,
 ) {
@@ -123,7 +130,7 @@ async function canManageTeamResource(
   if (role !== "tenant") {
     return false;
   }
-  if (resourceOwnerId && resourceOwnerId === workspaceId) {
+  if (resourceOwnerId && resourceOwnerId === organisationId) {
     return true;
   }
   if (teamId && userTeamIds.includes(teamId)) {
@@ -147,21 +154,23 @@ function slugify(value: string) {
 
 function normalizeProfileInput(input: Record<string, unknown>, existing: Record<string, unknown> | undefined) {
   const parsed = api.profiles.update.input.parse(input);
-  const tenantName = String(parsed.name || parsed.displayName || existing?.tenantName || existing?.displayName || "Untitled Workspace");
-  const displayName = String(parsed.displayName || parsed.name || existing?.displayName || tenantName);
+  const organisationName = String(parsed.name || parsed.displayName || existing?.organisationName || existing?.tenantName || existing?.displayName || "Untitled Organisation");
+  const displayName = String(parsed.displayName || parsed.name || existing?.displayName || organisationName);
   const publicSlug = slugify(String(parsed.publicSlug || existing?.publicSlug || displayName));
   return {
     ...parsed,
-    name: tenantName,
-    tenantName,
+    name: organisationName,
+    organisationName,
+    tenantName: organisationName,
     displayName,
     publicSlug,
     heroTitle: parsed.heroTitle || displayName,
     contactEmail: parsed.contactEmail || undefined,
+    studioId: String(parsed.studioId || existing?.studioId || "justso-studios"),
   };
 }
 
-async function requireCalendarResourceForTenant(calendarResourceId: number | null | undefined, tenantId: string, allowAdmin = false) {
+async function requireCalendarResourceForTenant(calendarResourceId: number | null | undefined, organisationId: string, allowAdmin = false) {
   if (!calendarResourceId) {
     throw new Error("Assign a calendar before saving this bookable resource.");
   }
@@ -171,8 +180,8 @@ async function requireCalendarResourceForTenant(calendarResourceId: number | nul
     throw new Error("Assigned calendar could not be found.");
   }
 
-  if (details.resource.tenantId !== tenantId && !allowAdmin) {
-    throw new Error("You can only assign calendars that belong to your tenant.");
+  if (details.resource.organisationId !== organisationId && !allowAdmin) {
+    throw new Error("You can only assign calendars that belong to your organisation.");
   }
 
   return details;
@@ -289,7 +298,7 @@ async function resolveBookableTarget(input: { spaceId?: number; serviceId?: numb
       throw new Error("This service is not ready for bookings yet.");
     }
     return {
-      tenantId: service.tenantId,
+      organisationId: service.organisationId,
       calendarResourceId: service.calendarResourceId,
       resource: service,
     };
@@ -300,11 +309,11 @@ async function resolveBookableTarget(input: { spaceId?: number; serviceId?: numb
     if (!space) {
       throw new Error("Space not found.");
     }
-    if (!space.isBookable || !space.calendarResourceId || !space.tenantId) {
+    if (!space.isBookable || !space.calendarResourceId || !space.organisationId) {
       throw new Error("This space is not ready for bookings yet.");
     }
     return {
-      tenantId: space.tenantId,
+      organisationId: space.organisationId,
       calendarResourceId: space.calendarResourceId,
       resource: space,
     };
@@ -319,7 +328,7 @@ async function resolveBookableTarget(input: { spaceId?: number; serviceId?: numb
       throw new Error("This item is not ready for reservations yet.");
     }
     return {
-      tenantId: item.ownerId,
+      organisationId: item.organisationId,
       calendarResourceId: item.calendarResourceId,
       resource: item,
     };
@@ -455,22 +464,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.put(api.profiles.update.path, requireAuth, async (req: any, res) => {
     try {
       const ctx = await getAuthContext(req);
-      if (!ctx || !ctx.profile || !ctx.workspaceId) {
+      if (!ctx || !ctx.profile || !ctx.organisationId) {
         return res.status(401).json({ message: "Unauthorized" });
       }
 
       const existingBySlug = req.body.publicSlug ? await storage.getProfileBySlug(slugify(req.body.publicSlug)) : undefined;
-      if (existingBySlug && existingBySlug.id !== ctx.workspaceId) {
+      if (existingBySlug && existingBySlug.id !== ctx.organisationId) {
         return res.status(400).json({ message: "That public page slug is already taken." });
       }
 
       const normalized = normalizeProfileInput(req.body, ctx.profile);
-      const profile = await storage.upsertProfile(ctx.workspaceId, normalized);
+      const profile = await storage.upsertProfile(ctx.organisationId, normalized);
       res.json({
         ...profile,
+        organisationName: profile.name,
         tenantName: profile.name,
         role: ctx.profile.role,
-        membershipRole: ctx.membershipRole,
+        studioRole: ctx.studioRole,
+        organisationRole: ctx.organisationRole,
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -480,33 +491,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get(api.workspaces.list.path, requireAuth, async (req: any, res) => {
+  app.get(api.organisations.list.path, requireAuth, async (req: any, res) => {
     const ctx = await getAuthContext(req);
     if (!ctx) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    return res.json(ctx.workspaces);
+    return res.json(ctx.organisations);
   });
 
-  app.post(api.workspaces.create.path, requireAuth, async (req: any, res) => {
+  app.post(api.organisations.create.path, requireAuth, async (req: any, res) => {
     try {
       const ctx = await getAuthContext(req);
       if (!ctx) {
         return res.status(401).json({ message: "Unauthorized" });
       }
-      if (ctx.appRole !== "admin") {
-        return res.status(403).json({ message: "Only platform admins can create workspaces." });
+      if (!["STUDIO_OWNER", "STUDIO_ADMIN", "STUDIO_MEMBER"].includes(ctx.studioRole)) {
+        return res.status(403).json({ message: "Only studio members can create organisations." });
       }
 
-      const input = api.workspaces.create.input.parse(req.body);
+      const input = api.organisations.create.input.parse(req.body);
+      const existingOrganisations = await storage.getWorkspacesForUser(ctx.actorUserId);
+      if (ctx.studioRole === "STUDIO_MEMBER") {
+        const ownedCount = existingOrganisations.filter((organisation) => organisation.membershipRole === "ORG_OWNER").length;
+        if (ownedCount >= 2) {
+          return res.status(403).json({ message: "Studio members can create up to 2 organisations." });
+        }
+      }
       const existingBySlug = input.publicSlug ? await storage.getProfileBySlug(slugify(input.publicSlug)) : undefined;
       if (existingBySlug) {
         return res.status(400).json({ message: "That public page slug is already taken." });
       }
 
-      const workspace = await storage.createWorkspace(ctx.actorUserId, normalizeProfileInput(input, undefined));
-      req.session.activeWorkspaceId = workspace.id;
-      return res.status(201).json(workspace);
+      const organisation = await storage.createWorkspace(ctx.actorUserId, normalizeProfileInput(input, undefined));
+      req.session.activeOrganisationId = organisation.id;
+      return res.status(201).json(organisation);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
@@ -517,28 +535,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get(api.invites.list.path, requireAuth, async (req: any, res) => {
     const ctx = await getAuthContext(req);
-    if (!ctx || !ctx.workspaceId) {
+    if (!ctx || !ctx.organisationId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    if (ctx.appRole !== "admin") {
-      return res.status(403).json({ message: "Only platform admins can manage invites." });
+    if (!["STUDIO_OWNER", "STUDIO_ADMIN", "ORG_OWNER", "ORG_ADMIN"].includes(String(ctx.organisationRole || ctx.studioRole))) {
+      return res.status(403).json({ message: "Only studio or organisation admins can manage invites." });
     }
-    return res.json(await storage.getWorkspaceInvitesByWorkspace(ctx.workspaceId));
+    return res.json(await storage.getWorkspaceInvitesByWorkspace(ctx.organisationId));
   });
 
   app.post(api.invites.create.path, requireAuth, async (req: any, res) => {
     try {
       const ctx = await getAuthContext(req);
-      if (!ctx || !ctx.workspaceId) {
+      if (!ctx || !ctx.organisationId) {
         return res.status(401).json({ message: "Unauthorized" });
       }
-      if (ctx.appRole !== "admin") {
-        return res.status(403).json({ message: "Only platform admins can invite users." });
+      if (!["STUDIO_OWNER", "STUDIO_ADMIN", "ORG_OWNER", "ORG_ADMIN"].includes(String(ctx.organisationRole || ctx.studioRole))) {
+        return res.status(403).json({ message: "Only studio or organisation admins can invite users." });
       }
       const input = api.invites.create.input.parse(req.body);
       const invite = await storage.createWorkspaceInvite(ctx.actorUserId, {
         ...input,
-        workspaceId: input.workspaceId || ctx.workspaceId,
+        organisationId: input.organisationId || ctx.organisationId,
         expiresAt: input.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
       return res.status(201).json(invite);
@@ -555,16 +573,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!invite) {
       return res.status(404).json({ message: "Invite not found." });
     }
-    const workspace = await storage.getWorkspace(invite.workspaceId);
-    if (!workspace) {
-      return res.status(404).json({ message: "Workspace not found." });
+    const organisation = await storage.getWorkspace(invite.organisationId);
+    if (!organisation) {
+      return res.status(404).json({ message: "Organisation not found." });
     }
-    return res.json({ invite, workspace });
+    return res.json({ invite, organisation });
   });
 
   app.post(api.invites.revoke.path.replace(":id", ":id"), requireAuth, async (req: any, res) => {
     const ctx = await getAuthContext(req);
-    if (!ctx || ctx.appRole !== "admin") {
+    if (!ctx || !["STUDIO_OWNER", "STUDIO_ADMIN", "ORG_OWNER", "ORG_ADMIN"].includes(String(ctx.organisationRole || ctx.studioRole))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     const invite = await storage.getWorkspaceInvite(Number(req.params.id));
@@ -577,7 +595,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post(api.invites.resend.path.replace(":id", ":id"), requireAuth, async (req: any, res) => {
     const ctx = await getAuthContext(req);
-    if (!ctx || ctx.appRole !== "admin") {
+    if (!ctx || !["STUDIO_OWNER", "STUDIO_ADMIN", "ORG_OWNER", "ORG_ADMIN"].includes(String(ctx.organisationRole || ctx.studioRole))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     const invite = await storage.getWorkspaceInvite(Number(req.params.id));
@@ -608,13 +626,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (invite.email.toLowerCase() !== req.session.user.email.toLowerCase()) {
       return res.status(403).json({ message: "This invite belongs to a different email address." });
     }
-    await storage.addWorkspaceMembership(invite.workspaceId, ctx.actorUserId, invite.role);
+    await storage.addWorkspaceMembership(invite.organisationId, ctx.actorUserId, invite.role);
     await storage.updateWorkspaceInvite(invite.id, {
       status: "accepted",
       acceptedAt: new Date(),
     });
-    req.session.activeWorkspaceId = invite.workspaceId;
-    return res.json({ workspaceId: invite.workspaceId });
+    req.session.activeOrganisationId = invite.organisationId;
+    return res.json({ organisationId: invite.organisationId });
   });
 
   app.post("/api/login-demo", async (req: any, res) => {
@@ -891,7 +909,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!connection) {
       return res.status(404).json({ message: "Calendar connection not found" });
     }
-    if (connection.tenantId !== ctx.userId && ctx.profile.role !== "admin") {
+    if (connection.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
     }
 
@@ -1032,7 +1050,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allSpaces = await storage.getSpaces();
     const scoped = ctx.profile.role === "admin"
       ? allSpaces
-      : allSpaces.filter((space) => space.tenantId === ctx.userId || filterByVisibility([space], ctx.profile.role, ctx.userId, ctx.teamIds).length > 0);
+      : allSpaces.filter((space) => space.organisationId === ctx.userId || filterByVisibility([space], ctx.profile.role, ctx.userId, ctx.teamIds).length > 0);
     res.json(scoped);
   });
 
@@ -1041,7 +1059,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!ctx) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    const scoped = (await storage.getSpaces()).filter((space) => space.isStorageLocation && (ctx.profile.role === "admin" || space.tenantId === ctx.userId));
+    const scoped = (await storage.getSpaces()).filter((space) => space.isStorageLocation && (ctx.profile.role === "admin" || space.organisationId === ctx.userId));
     res.json(scoped);
   });
 
@@ -1076,12 +1094,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Space not found" });
       }
-      if (existing.tenantId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (existing.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       const input = api.spaces.update.input.parse(req.body);
       if ((input.isBookable ?? existing.isBookable) && (input.calendarResourceId ?? existing.calendarResourceId)) {
-        await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.tenantId || ctx.userId, ctx.profile.role === "admin");
+        await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.organisationId || ctx.userId, ctx.profile.role === "admin");
       } else if (input.isBookable ?? existing.isBookable) {
         throw new Error("Bookable spaces need a calendar assignment.");
       }
@@ -1104,7 +1122,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!existing) {
       return res.status(404).json({ message: "Space not found" });
     }
-    if (existing.tenantId !== ctx.userId && ctx.profile.role !== "admin") {
+    if (existing.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteSpace(existing.id);
@@ -1119,7 +1137,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     const filtered = ctx.profile.role === "admin"
       ? allServices
-      : filterByVisibility(allServices, ctx.profile.role, ctx.userId, ctx.teamIds, (service) => service.tenantId).filter((service) => service.tenantId === ctx.userId || service.visibility !== "private");
+      : filterByVisibility(allServices, ctx.profile.role, ctx.userId, ctx.teamIds, (service) => service.organisationId).filter((service) => service.organisationId === ctx.userId || service.visibility !== "private");
     res.json(filtered);
   });
 
@@ -1156,7 +1174,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Service not found" });
       }
-      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.tenantId))) {
+      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.organisationId))) {
         return res.status(403).json({ message: "Forbidden" });
       }
       const bodySchema = api.services.update.input.extend({
@@ -1165,7 +1183,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       const input = bodySchema.parse(req.body);
       visibilityEnum.parse((input.visibility || existing.visibility) as string);
-      await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.tenantId, ctx.profile.role === "admin");
+      await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.organisationId, ctx.profile.role === "admin");
       const updated = await storage.updateService(existing.id, input);
       res.json(updated);
     } catch (error) {
@@ -1185,7 +1203,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!existing) {
       return res.status(404).json({ message: "Service not found" });
     }
-    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.tenantId))) {
+    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.organisationId))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteService(existing.id);
@@ -1200,7 +1218,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allItems = await storage.getInventoryItems();
     const filtered = ctx.profile.role === "admin"
       ? allItems
-      : filterByVisibility(allItems, ctx.profile.role, ctx.userId, ctx.teamIds, (item) => item.ownerId).filter((item) => item.ownerId === ctx.userId || item.visibility !== "private");
+      : filterByVisibility(allItems, ctx.profile.role, ctx.userId, ctx.teamIds, (item) => item.organisationId).filter((item) => item.organisationId === ctx.userId || item.visibility !== "private");
     res.json(filtered);
   });
 
@@ -1235,12 +1253,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Item not found" });
       }
-      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.ownerId))) {
+      if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.organisationId))) {
         return res.status(403).json({ message: "Forbidden" });
       }
       const input = api.inventory.update.input.parse(req.body);
       if (input.isAvailableForHire ?? existing.isAvailableForHire) {
-        await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.ownerId, ctx.profile.role === "admin");
+        await requireCalendarResourceForTenant(input.calendarResourceId ?? existing.calendarResourceId, existing.organisationId, ctx.profile.role === "admin");
       }
       const updated = await storage.updateInventoryItem(existing.id, input);
       res.json(updated);
@@ -1261,7 +1279,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!existing) {
       return res.status(404).json({ message: "Item not found" });
     }
-    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.ownerId))) {
+    if (!(await canManageTeamResource(existing.teamId, ctx.profile.role, ctx.actorUserId, ctx.userId, ctx.teamIds, existing.organisationId))) {
       return res.status(403).json({ message: "Forbidden" });
     }
     await storage.deleteInventoryItem(existing.id);
@@ -1276,7 +1294,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const allBookings = await storage.getBookings();
     const scoped = ctx.profile.role === "admin"
       ? allBookings
-      : allBookings.filter((booking) => booking.tenantId === ctx.userId);
+      : allBookings.filter((booking) => booking.organisationId === ctx.userId);
     res.json(scoped);
   });
 
@@ -1295,7 +1313,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       const input = bodySchema.parse(req.body);
       const target = await resolveBookableTarget(input);
-      if (target.tenantId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (target.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       await assertNoBookingConflict({
@@ -1307,7 +1325,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       let created = await storage.createBooking(ctx.actorUserId, {
         ...input,
-        tenantId: target.tenantId,
+        organisationId: target.organisationId,
         calendarResourceId: target.calendarResourceId,
         status: "confirmed",
         syncState: "pending",
@@ -1332,7 +1350,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!existing) {
         return res.status(404).json({ message: "Booking not found" });
       }
-      if (existing.tenantId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (existing.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       const bodySchema = api.bookings.update.input.extend({
@@ -1377,7 +1395,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     const hires = await storage.getInventoryHires();
     const items = await storage.getInventoryItems();
-    const allowedIds = new Set(items.filter((item) => ctx.profile.role === "admin" || item.ownerId === ctx.userId).map((item) => item.id));
+    const allowedIds = new Set(items.filter((item) => ctx.profile.role === "admin" || item.organisationId === ctx.userId).map((item) => item.id));
     res.json(hires.filter((hire) => allowedIds.has(hire.itemId)));
   });
 
@@ -1398,7 +1416,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!item) {
         return res.status(404).json({ message: "Inventory item not found" });
       }
-      if (item.ownerId !== ctx.userId && ctx.profile.role !== "admin") {
+      if (item.organisationId !== ctx.userId && ctx.profile.role !== "admin") {
         return res.status(403).json({ message: "Forbidden" });
       }
       const hire = await storage.createInventoryHire(ctx.actorUserId, input);
@@ -1449,9 +1467,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     res.json({
       profile,
-      services: allServices.filter((service) => service.tenantId === profile.id && service.visibility === "public"),
-      spaces: allSpaces.filter((space) => space.tenantId === profile.id && space.visibility === "public" && space.isBookable),
-      inventory: allItems.filter((item) => item.ownerId === profile.id && item.visibility === "public" && item.isAvailableForHire),
+      services: allServices.filter((service) => service.organisationId === profile.id && service.visibility === "public"),
+      spaces: allSpaces.filter((space) => space.organisationId === profile.id && space.visibility === "public" && space.isBookable),
+      inventory: allItems.filter((item) => item.organisationId === profile.id && item.visibility === "public" && item.isAvailableForHire),
       calendars: resources,
     });
   });
@@ -1495,7 +1513,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       const booking = await storage.createBooking(null, {
         ...input,
-        tenantId: target.tenantId,
+        organisationId: target.organisationId,
         calendarResourceId: target.calendarResourceId,
         status: "pending",
         syncState: "pending",

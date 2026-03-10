@@ -26,17 +26,17 @@ export function useAuth() {
     staleTime: 1000 * 60,
   });
 
-  const switchWorkspaceMutation = useMutation({
-    mutationFn: async (workspaceId: string) => {
-      const response = await fetch(api.auth.switchWorkspace.path, {
-        method: api.auth.switchWorkspace.method,
+  const switchOrganisationMutation = useMutation({
+    mutationFn: async (organisationId: string) => {
+      const response = await fetch(api.auth.switchOrganisation.path, {
+        method: api.auth.switchOrganisation.method,
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ workspaceId }),
+        body: JSON.stringify({ organisationId }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || "Could not switch workspace.");
+        throw new Error(payload?.message || "Could not switch organisation.");
       }
       return response.json();
     },
@@ -48,8 +48,10 @@ export function useAuth() {
   return {
     session: data,
     user: data?.user ?? null,
-    workspaces: data?.workspaces ?? [],
-    activeWorkspaceId: data?.activeWorkspaceId ?? null,
+    organisations: data?.organisations ?? [],
+    activeOrganisationId: data?.activeOrganisationId ?? null,
+    workspaces: data?.workspaces ?? data?.organisations ?? [],
+    activeWorkspaceId: data?.activeWorkspaceId ?? data?.activeOrganisationId ?? null,
     pendingInvite: data?.invite ?? null,
     isLoading,
     isAuthenticated: !!data?.user,
@@ -60,7 +62,9 @@ export function useAuth() {
     logout: () => {
       window.location.assign("/api/auth/logout");
     },
-    switchWorkspace: switchWorkspaceMutation.mutate,
-    isSwitchingWorkspace: switchWorkspaceMutation.isPending,
+    switchOrganisation: switchOrganisationMutation.mutate,
+    isSwitchingOrganisation: switchOrganisationMutation.isPending,
+    switchWorkspace: switchOrganisationMutation.mutate,
+    isSwitchingWorkspace: switchOrganisationMutation.isPending,
   };
 }

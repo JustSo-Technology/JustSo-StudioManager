@@ -187,7 +187,7 @@ export default function Teams() {
   const [viewingTeam, setViewingTeam] = useState<Team | null>(null);
   const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
 
-  const canManage = profile?.role === "admin" || profile?.role === "tenant";
+  const canManage = !!profile;
 
   const form = useForm<TeamFormValues>({
     resolver: zodResolver(teamFormSchema),

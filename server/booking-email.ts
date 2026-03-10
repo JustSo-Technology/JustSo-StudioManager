@@ -3,7 +3,7 @@ import { emailService } from "./email";
 import { storage } from "./storage";
 
 export async function getBookingEmailContext(booking: Booking) {
-  const profile = booking.tenantId ? await storage.getProfile(booking.tenantId) : undefined;
+  const profile = booking.organisationId ? await storage.getProfile(booking.organisationId) : undefined;
 
   let resourceLabel = "Reservation";
   if (booking.serviceId) {

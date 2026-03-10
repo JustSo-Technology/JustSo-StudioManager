@@ -336,7 +336,7 @@ export default function Services() {
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [deletingService, setDeletingService] = useState<Service | null>(null);
 
-  const canManage = profile?.role === "admin" || profile?.role === "tenant";
+  const canManage = !!profile;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -471,7 +471,7 @@ export default function Services() {
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-4">
-                    Provider ID: {service.tenantId.substring(0,6)}...
+                    Organisation ID: {service.organisationId.substring(0,6)}...
                   </p>
                   <p className="text-muted-foreground text-sm mb-4 line-clamp-3">
                     {service.description || "No description provided."}

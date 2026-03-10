@@ -43,7 +43,7 @@ function getStatusTone(configured: boolean, enabled: boolean, failedReminders: n
 export default function EmailSettingsPage() {
   const { toast } = useToast();
   const { data: profile, isLoading: isProfileLoading } = useProfile();
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = profile?.studioRole === "STUDIO_OWNER" || profile?.studioRole === "STUDIO_ADMIN";
 
   const { data: settings, isLoading: isSettingsLoading, refetch: refetchSettings } = useEmailSettings(isAdmin);
   const { data: health, isLoading: isHealthLoading, refetch: refetchHealth } = useEmailHealth(isAdmin);

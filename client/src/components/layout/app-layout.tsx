@@ -20,28 +20,29 @@ function slugify(value: string) {
 export function AppLayout({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [location] = useLocation();
-  const { isAuthenticated, isLoading, signIn, logout, user, pendingInvite, activeWorkspaceId } = useAuth();
-  const [workspaceName, setWorkspaceName] = useState("");
+  const { isAuthenticated, isLoading, signIn, logout, user, pendingInvite, activeOrganisationId } = useAuth();
+  const [organisationName, setOrganisationName] = useState("");
   const [createError, setCreateError] = useState("");
   const authError = useMemo(() => new URLSearchParams(window.location.search).get("authError"), [location]);
 
-  const createWorkspace = useMutation({
+  const createOrganisation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/workspaces", {
+      const response = await fetch("/api/organisations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          name: workspaceName,
-          displayName: workspaceName,
-          publicSlug: slugify(workspaceName),
+          name: organisationName,
+          displayName: organisationName,
+          publicSlug: slugify(organisationName),
           contactEmail: user?.email,
-          heroTitle: workspaceName,
+          heroTitle: organisationName,
+          studioId: "justso-studios",
         }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || "Could not create workspace.");
+        throw new Error(payload?.message || "Could not create organisation.");
       }
       return response.json();
     },
@@ -79,7 +80,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </p>
           {pendingInvite ? (
             <p className="mx-auto mb-6 max-w-xl text-sm text-foreground/80">
-              You have a pending invite to <strong>{pendingInvite.workspaceName}</strong>. Sign in with the invited email to join that workspace.
+              You have a pending invite to <strong>{pendingInvite.organisationName || pendingInvite.workspaceName}</strong>. Sign in with the invited email to join that organisation.
             </p>
           ) : (
             <p className="mx-auto mb-6 max-w-xl text-sm text-foreground/80">
@@ -101,26 +102,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!activeWorkspaceId) {
+  if (!activeOrganisationId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <div className="glass-panel w-full max-w-2xl rounded-3xl p-10 text-center">
           <h1 className="font-display text-3xl font-bold tracking-tight">Finish onboarding</h1>
-          {user?.appRole === "admin" ? (
+          {user?.studioRole === "STUDIO_OWNER" || user?.studioRole === "STUDIO_ADMIN" ? (
             <>
               <p className="mx-auto mt-2 max-w-xl text-muted-foreground">
-                You are signed in as the platform admin. Create the first workspace, then invite tenant users into it.
+                You are signed in at studio level. Create the first organisation, then invite users into it.
               </p>
               <div className="mx-auto mt-8 max-w-md space-y-3">
                 <Input
                   className="h-12 rounded-xl bg-background"
-                  placeholder="Workspace name"
-                  value={workspaceName}
-                  onChange={(event) => setWorkspaceName(event.target.value)}
+                  placeholder="Organisation name"
+                  value={organisationName}
+                  onChange={(event) => setOrganisationName(event.target.value)}
                 />
                 {createError ? <p className="text-sm text-destructive">{createError}</p> : null}
-                <Button className="h-12 w-full rounded-xl" disabled={!workspaceName || createWorkspace.isPending} onClick={() => createWorkspace.mutate()}>
-                  {createWorkspace.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create first workspace"}
+                <Button className="h-12 w-full rounded-xl" disabled={!organisationName || createOrganisation.isPending} onClick={() => createOrganisation.mutate()}>
+                  {createOrganisation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create first organisation"}
                 </Button>
               </div>
             </>

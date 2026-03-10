@@ -7,24 +7,25 @@ import {
   emailSettings,
   inventoryHires,
   inventoryItems,
+  insertOrganisationInviteSchema,
+  insertOrganisationSchema,
   insertBookingSchema,
   insertCalendarConnectionSchema,
   insertCalendarResourceSchema,
   insertInventoryHireSchema,
   insertInventoryItemSchema,
+  insertOrganisationMembershipSchema,
   insertServiceSchema,
   insertSpaceSchema,
-  insertTeamMemberSchema,
   insertTeamSchema,
-  insertWorkspaceInviteSchema,
-  insertWorkspaceSchema,
+  insertTeamMembershipSchema,
+  organisationInvites,
+  organisationProfileResponseSchema,
+  organisations,
   services,
   spaces,
-  teamMembers,
+  teamMemberships,
   teams,
-  workspaceInvites,
-  workspaceProfileResponseSchema,
-  workspaces,
 } from "./schema";
 
 const sessionUserSchema = z.object({
@@ -34,15 +35,16 @@ const sessionUserSchema = z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   fullName: z.string().nullable(),
-  appRole: z.enum(["member", "admin"]),
+  studioRole: z.enum(["STUDIO_OWNER", "STUDIO_ADMIN", "STUDIO_MEMBER"]),
+  appRole: z.enum(["admin", "member"]).optional(),
 });
 
-const sessionWorkspaceSchema = z.object({
+const sessionOrganisationSchema = z.object({
   id: z.string(),
   name: z.string(),
   displayName: z.string().nullable(),
   publicSlug: z.string().nullable(),
-  membershipRole: z.enum(["owner", "manager", "member"]).nullable(),
+  organisationRole: z.enum(["ORG_OWNER", "ORG_ADMIN", "ORG_MEMBER"]).nullable(),
 });
 
 export const errorSchemas = {
@@ -58,16 +60,16 @@ export const api = {
       method: "GET" as const,
       path: "/api/profiles/me" as const,
       responses: {
-        200: workspaceProfileResponseSchema,
+        200: organisationProfileResponseSchema,
         404: errorSchemas.notFound,
       },
     },
     update: {
       method: "PUT" as const,
       path: "/api/profiles/me" as const,
-      input: insertWorkspaceSchema.partial(),
+      input: insertOrganisationSchema.partial(),
       responses: {
-        200: workspaceProfileResponseSchema,
+        200: organisationProfileResponseSchema,
         400: errorSchemas.validation,
       },
     },
@@ -79,15 +81,20 @@ export const api = {
       responses: {
         200: z.object({
           user: sessionUserSchema,
-          activeWorkspaceId: z.string().nullable(),
-          workspaces: z.array(sessionWorkspaceSchema),
+          activeStudioId: z.string().nullable(),
+          activeOrganisationId: z.string().nullable(),
+          organisations: z.array(sessionOrganisationSchema),
+          activeWorkspaceId: z.string().nullable().optional(),
+          workspaces: z.array(sessionOrganisationSchema).optional(),
           invite: z
             .object({
               token: z.string(),
-              workspaceId: z.string(),
-              workspaceName: z.string(),
+              organisationId: z.string(),
+              organisationName: z.string(),
+              workspaceId: z.string().optional(),
+              workspaceName: z.string().optional(),
               email: z.string().email(),
-              role: z.enum(["owner", "manager", "member"]),
+              role: z.enum(["ORG_OWNER", "ORG_ADMIN", "ORG_MEMBER"]),
               expiresAt: z.string(),
             })
             .nullable(),
@@ -95,50 +102,50 @@ export const api = {
         401: errorSchemas.unauthorized,
       },
     },
-    switchWorkspace: {
+    switchOrganisation: {
       method: "POST" as const,
-      path: "/api/auth/workspaces/switch" as const,
-      input: z.object({ workspaceId: z.string() }),
-      responses: { 200: z.object({ workspaceId: z.string() }), 400: errorSchemas.validation, 403: errorSchemas.forbidden },
+      path: "/api/auth/organisations/switch" as const,
+      input: z.object({ organisationId: z.string() }),
+      responses: { 200: z.object({ organisationId: z.string() }), 400: errorSchemas.validation, 403: errorSchemas.forbidden },
     },
   },
-  workspaces: {
+  organisations: {
     list: {
       method: "GET" as const,
-      path: "/api/workspaces" as const,
-      responses: { 200: z.array(z.custom<typeof workspaces.$inferSelect>()) },
+      path: "/api/organisations" as const,
+      responses: { 200: z.array(z.custom<typeof organisations.$inferSelect>()) },
     },
     create: {
       method: "POST" as const,
-      path: "/api/workspaces" as const,
-      input: insertWorkspaceSchema,
-      responses: { 201: z.custom<typeof workspaces.$inferSelect>(), 400: errorSchemas.validation },
+      path: "/api/organisations" as const,
+      input: insertOrganisationSchema,
+      responses: { 201: z.custom<typeof organisations.$inferSelect>(), 400: errorSchemas.validation },
     },
   },
   invites: {
     list: {
       method: "GET" as const,
       path: "/api/invites" as const,
-      responses: { 200: z.array(z.custom<typeof workspaceInvites.$inferSelect>()) },
+      responses: { 200: z.array(z.custom<typeof organisationInvites.$inferSelect>()) },
     },
     create: {
       method: "POST" as const,
       path: "/api/invites" as const,
-      input: insertWorkspaceInviteSchema.extend({
-        workspaceId: z.string(),
+      input: insertOrganisationInviteSchema.extend({
+        organisationId: z.string(),
         email: z.string().email(),
-        role: z.enum(["owner", "manager", "member"]).default("member"),
+        role: z.enum(["ORG_OWNER", "ORG_ADMIN", "ORG_MEMBER"]).default("ORG_MEMBER"),
         expiresAt: z.coerce.date().optional(),
       }),
-      responses: { 201: z.custom<typeof workspaceInvites.$inferSelect>(), 400: errorSchemas.validation },
+      responses: { 201: z.custom<typeof organisationInvites.$inferSelect>(), 400: errorSchemas.validation },
     },
     resolve: {
       method: "GET" as const,
       path: "/api/invites/:token" as const,
       responses: {
         200: z.object({
-          invite: z.custom<typeof workspaceInvites.$inferSelect>(),
-          workspace: z.custom<typeof workspaces.$inferSelect>(),
+          invite: z.custom<typeof organisationInvites.$inferSelect>(),
+          organisation: z.custom<typeof organisations.$inferSelect>(),
         }),
         404: errorSchemas.notFound,
       },
@@ -146,17 +153,17 @@ export const api = {
     revoke: {
       method: "POST" as const,
       path: "/api/invites/:id/revoke" as const,
-      responses: { 200: z.custom<typeof workspaceInvites.$inferSelect>(), 404: errorSchemas.notFound },
+      responses: { 200: z.custom<typeof organisationInvites.$inferSelect>(), 404: errorSchemas.notFound },
     },
     resend: {
       method: "POST" as const,
       path: "/api/invites/:id/resend" as const,
-      responses: { 200: z.custom<typeof workspaceInvites.$inferSelect>(), 404: errorSchemas.notFound },
+      responses: { 200: z.custom<typeof organisationInvites.$inferSelect>(), 404: errorSchemas.notFound },
     },
     accept: {
       method: "POST" as const,
       path: "/api/invites/:token/accept" as const,
-      responses: { 200: z.object({ workspaceId: z.string() }), 404: errorSchemas.notFound },
+      responses: { 200: z.object({ organisationId: z.string() }), 404: errorSchemas.notFound },
     },
   },
   teams: {
@@ -186,13 +193,13 @@ export const api = {
       list: {
         method: "GET" as const,
         path: "/api/teams/:id/members" as const,
-        responses: { 200: z.array(z.custom<typeof teamMembers.$inferSelect>()) },
+        responses: { 200: z.array(z.custom<typeof teamMemberships.$inferSelect>()) },
       },
       add: {
         method: "POST" as const,
         path: "/api/teams/:id/members" as const,
         input: z.object({ userId: z.string(), role: z.string().optional() }),
-        responses: { 201: z.custom<typeof teamMembers.$inferSelect>(), 400: errorSchemas.validation },
+        responses: { 201: z.custom<typeof teamMemberships.$inferSelect>(), 400: errorSchemas.validation },
       },
       remove: {
         method: "DELETE" as const,

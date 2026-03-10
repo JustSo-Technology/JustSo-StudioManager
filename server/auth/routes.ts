@@ -1,8 +1,9 @@
 import type { Express } from "express";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { z } from "zod";
 import { api } from "@shared/routes";
 import { users } from "@shared/models/auth";
+import { organisationMemberships, studioMemberships, studios } from "@shared/schema";
 import { db } from "../db";
 import { storage } from "../storage";
 import { authStorage } from "./storage";
@@ -62,6 +63,58 @@ async function shouldBootstrapAdmin(email: string) {
   return Number(existingAdmins?.count || 0) === 0;
 }
 
+const DEFAULT_STUDIO_ID = "justso-studios";
+
+async function ensureDefaultStudio() {
+  const [existing] = await db.select().from(studios).where(eq(studios.id, DEFAULT_STUDIO_ID));
+  if (existing) {
+    return existing;
+  }
+
+  const [created] = await db
+    .insert(studios)
+    .values({
+      id: DEFAULT_STUDIO_ID,
+      name: "JustSo. Studios",
+      slug: "justso-studios",
+      description: "Default studio for this Studio Manager deployment.",
+      updatedAt: new Date(),
+    })
+    .returning();
+  return created;
+}
+
+async function ensureStudioMembership(userId: string, role: "STUDIO_OWNER" | "STUDIO_ADMIN" | "STUDIO_MEMBER") {
+  await ensureDefaultStudio();
+  const [existing] = await db
+    .select()
+    .from(studioMemberships)
+    .where(and(eq(studioMemberships.studioId, DEFAULT_STUDIO_ID), eq(studioMemberships.userId, userId)));
+
+  if (existing) {
+    if (existing.role === role) {
+      return existing;
+    }
+    const [updated] = await db
+      .update(studioMemberships)
+      .set({ role, updatedAt: new Date() })
+      .where(eq(studioMemberships.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  const [created] = await db
+    .insert(studioMemberships)
+    .values({
+      studioId: DEFAULT_STUDIO_ID,
+      userId,
+      role,
+      updatedAt: new Date(),
+    })
+    .returning();
+  return created;
+}
+
 async function resolveLocalUser(userInfo: Record<string, unknown>, issuer: string) {
   const email = String(userInfo.email || "").toLowerCase();
   const subject = String(userInfo.sub || "");
@@ -76,9 +129,10 @@ async function resolveLocalUser(userInfo: Record<string, unknown>, issuer: strin
     (await authStorage.getUserByEmail(email));
 
   const username = existing?.username || (await ensureUniqueUsername(preferredUsername));
-  const appRole = existing?.appRole || ((await shouldBootstrapAdmin(email)) ? "admin" : "member");
+  const shouldBootstrap = await shouldBootstrapAdmin(email);
+  const appRole = existing?.appRole || (shouldBootstrap ? "admin" : "member");
 
-  return authStorage.upsertUser({
+  const user = await authStorage.upsertUser({
     id: existing?.id,
     email,
     username,
@@ -92,6 +146,9 @@ async function resolveLocalUser(userInfo: Record<string, unknown>, issuer: strin
     lastLoginAt: new Date(),
     updatedAt: new Date(),
   });
+
+  await ensureStudioMembership(user.id, shouldBootstrap ? "STUDIO_OWNER" : "STUDIO_MEMBER");
+  return user;
 }
 
 async function applyInviteIfPresent(req: any, user: Awaited<ReturnType<typeof resolveLocalUser>>) {
@@ -110,13 +167,19 @@ async function applyInviteIfPresent(req: any, user: Awaited<ReturnType<typeof re
     return;
   }
 
-  await storage.addWorkspaceMembership(invite.workspaceId, user.id, invite.role);
+  const [existingOrganisationMembership] = await db
+    .select()
+    .from(organisationMemberships)
+    .where(and(eq(organisationMemberships.organisationId, invite.organisationId), eq(organisationMemberships.userId, user.id)));
+  if (!existingOrganisationMembership) {
+    await storage.addWorkspaceMembership(invite.organisationId, user.id, invite.role);
+  }
   await storage.updateWorkspaceInvite(invite.id, {
     status: "accepted",
     acceptedAt: new Date(),
   });
 
-  req.session.activeWorkspaceId = invite.workspaceId;
+  req.session.activeOrganisationId = invite.organisationId;
   req.session.inviteToken = null;
 }
 
@@ -126,56 +189,76 @@ export function registerAuthRoutes(app: Express): void {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const workspaces = await storage.getWorkspacesForUser(req.session.user.id);
-    const activeWorkspaceId =
-      req.session.activeWorkspaceId && workspaces.some((workspace) => workspace.id === req.session.activeWorkspaceId)
-        ? req.session.activeWorkspaceId
-        : workspaces[0]?.id || null;
-    req.session.activeWorkspaceId = activeWorkspaceId;
+    const organisations = await storage.getWorkspacesForUser(req.session.user.id);
+    const [studioMembership] = await db
+      .select()
+      .from(studioMemberships)
+      .where(and(eq(studioMemberships.studioId, DEFAULT_STUDIO_ID), eq(studioMemberships.userId, req.session.user.id)));
+
+    const activeOrganisationId =
+      req.session.activeOrganisationId && organisations.some((organisation) => organisation.id === req.session.activeOrganisationId)
+        ? req.session.activeOrganisationId
+        : organisations[0]?.id || null;
+    req.session.activeOrganisationId = activeOrganisationId;
 
     let invite = null;
     if (req.session.inviteToken) {
       const resolvedInvite = await storage.getWorkspaceInviteByToken(req.session.inviteToken);
-      const workspace = resolvedInvite ? await storage.getWorkspace(resolvedInvite.workspaceId) : undefined;
-      if (resolvedInvite && workspace) {
+      const organisation = resolvedInvite ? await storage.getWorkspace(resolvedInvite.organisationId) : undefined;
+      if (resolvedInvite && organisation) {
         invite = {
           token: resolvedInvite.token,
-          workspaceId: resolvedInvite.workspaceId,
-          workspaceName: workspace.displayName || workspace.name,
+          organisationId: resolvedInvite.organisationId,
+          organisationName: organisation.displayName || organisation.name,
+          workspaceId: resolvedInvite.organisationId,
+          workspaceName: organisation.displayName || organisation.name,
           email: resolvedInvite.email,
-          role: resolvedInvite.role as "owner" | "manager" | "member",
+          role: resolvedInvite.role as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER",
           expiresAt: resolvedInvite.expiresAt.toISOString(),
         };
       }
     }
 
     return res.json({
-      user: req.session.user,
-      activeWorkspaceId,
-      workspaces: workspaces.map((workspace) => ({
-        id: workspace.id,
-        name: workspace.name,
-        displayName: workspace.displayName,
-        publicSlug: workspace.publicSlug,
-        membershipRole: workspace.membershipRole as "owner" | "manager" | "member" | null,
+      user: {
+        ...req.session.user,
+        studioRole: studioMembership?.role || req.session.user.studioRole || "STUDIO_MEMBER",
+        appRole: req.session.user.appRole || "member",
+      },
+      activeStudioId: DEFAULT_STUDIO_ID,
+      activeOrganisationId,
+      activeWorkspaceId: activeOrganisationId,
+      organisations: organisations.map((organisation) => ({
+        id: organisation.id,
+        name: organisation.name,
+        displayName: organisation.displayName,
+        publicSlug: organisation.publicSlug,
+        organisationRole: organisation.membershipRole as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null,
+      })),
+      workspaces: organisations.map((organisation) => ({
+        id: organisation.id,
+        name: organisation.name,
+        displayName: organisation.displayName,
+        publicSlug: organisation.publicSlug,
+        organisationRole: organisation.membershipRole as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null,
       })),
       invite,
     });
   });
 
-  app.post(api.auth.switchWorkspace.path, async (req: any, res) => {
+  app.post(api.auth.switchOrganisation.path, async (req: any, res) => {
     if (!req.session?.user?.id) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const input = api.auth.switchWorkspace.input.parse(req.body);
-    const membership = await storage.getWorkspaceMembership(input.workspaceId, req.session.user.id);
-    if (!membership && req.session.user.appRole !== "admin") {
+    const input = api.auth.switchOrganisation.input.parse(req.body);
+    const membership = await storage.getWorkspaceMembership(input.organisationId, req.session.user.id);
+    if (!membership && req.session.user.studioRole !== "STUDIO_OWNER" && req.session.user.studioRole !== "STUDIO_ADMIN") {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    req.session.activeWorkspaceId = input.workspaceId;
-    return res.json({ workspaceId: input.workspaceId });
+    req.session.activeOrganisationId = input.organisationId;
+    return res.json({ organisationId: input.organisationId });
   });
 
   app.get("/api/auth/login", async (req: any, res) => {
@@ -209,15 +292,16 @@ export function registerAuthRoutes(app: Express): void {
         firstName: user.firstName ?? null,
         lastName: user.lastName ?? null,
         fullName: user.fullName ?? null,
-        appRole: user.appRole,
+        studioRole: (await ensureStudioMembership(user.id, user.appRole === "admin" ? "STUDIO_OWNER" : "STUDIO_MEMBER")).role,
+        activeStudioId: DEFAULT_STUDIO_ID,
       };
       req.session.oidc = { idToken: tokens.id_token };
 
       await applyInviteIfPresent(req, user);
 
-      const workspaces = await storage.getWorkspacesForUser(user.id);
-      if (!req.session.activeWorkspaceId && workspaces[0]) {
-        req.session.activeWorkspaceId = workspaces[0].id;
+      const organisations = await storage.getWorkspacesForUser(user.id);
+      if (!req.session.activeOrganisationId && organisations[0]) {
+        req.session.activeOrganisationId = organisations[0].id;
       }
 
       return res.redirect("/");

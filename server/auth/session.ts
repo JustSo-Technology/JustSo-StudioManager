@@ -12,7 +12,8 @@ declare module "express-session" {
       firstName: string | null;
       lastName: string | null;
       fullName: string | null;
-      appRole: string;
+      studioRole: string;
+      activeStudioId?: string | null;
     } | null;
     oidc?: {
       state?: string;
@@ -20,7 +21,7 @@ declare module "express-session" {
       nonce?: string;
       idToken?: string;
     };
-    activeWorkspaceId?: string | null;
+    activeOrganisationId?: string | null;
     inviteToken?: string | null;
   }
 }
@@ -62,7 +63,7 @@ export async function setupAuth(app: Express) {
     const user = await authStorage.getUser(sessionUser.id);
     if (!user) {
       req.session.user = null;
-      req.session.activeWorkspaceId = null;
+      req.session.activeOrganisationId = null;
       return next();
     }
 
@@ -73,7 +74,8 @@ export async function setupAuth(app: Express) {
       firstName: user.firstName ?? null,
       lastName: user.lastName ?? null,
       fullName: user.fullName ?? null,
-      appRole: user.appRole,
+      studioRole: req.session.user?.studioRole || "STUDIO_MEMBER",
+      activeStudioId: req.session.user?.activeStudioId || null,
     };
     next();
   });

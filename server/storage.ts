@@ -201,7 +201,7 @@ export class DatabaseStorage implements IStorage {
     const memberships = await db.select().from(workspaceMemberships).where(eq(workspaceMemberships.userId, userId));
     const results: Array<(Workspace & { membershipRole: string | null }) | null> = await Promise.all(
       memberships.map(async (membership) => {
-        const workspace = await this.getWorkspace(membership.workspaceId);
+        const workspace = await this.getWorkspace(membership.organisationId);
         return workspace ? { ...workspace, membershipRole: membership.role } : null;
       }),
     );
@@ -239,7 +239,7 @@ export class DatabaseStorage implements IStorage {
     const [membership] = await db
       .select()
       .from(workspaceMemberships)
-      .where(and(eq(workspaceMemberships.workspaceId, workspaceId), eq(workspaceMemberships.userId, userId)));
+      .where(and(eq(workspaceMemberships.organisationId, workspaceId), eq(workspaceMemberships.userId, userId)));
     return membership;
   }
 
@@ -256,7 +256,7 @@ export class DatabaseStorage implements IStorage {
 
     const [created] = await db
       .insert(workspaceMemberships)
-      .values({ workspaceId, userId, role, updatedAt: new Date() })
+      .values({ organisationId: workspaceId, userId, role, updatedAt: new Date() })
       .returning();
     return created;
   }
@@ -276,14 +276,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getWorkspaceInvitesByWorkspace(workspaceId: string): Promise<WorkspaceInvite[]> {
-    return db.select().from(workspaceInvites).where(eq(workspaceInvites.workspaceId, workspaceId)).orderBy(desc(workspaceInvites.createdAt));
+    return db.select().from(workspaceInvites).where(eq(workspaceInvites.organisationId, workspaceId)).orderBy(desc(workspaceInvites.createdAt));
   }
 
   async createWorkspaceInvite(inviterUserId: string, invite: CreateWorkspaceInviteRequest): Promise<WorkspaceInvite> {
     const [created] = await db
       .insert(workspaceInvites)
       .values({
-        workspaceId: invite.workspaceId,
+        organisationId: invite.organisationId,
         inviterUserId,
         email: invite.email.toLowerCase(),
         role: invite.role,
@@ -310,7 +310,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTeamsByWorkspace(workspaceId: string): Promise<Team[]> {
-    return db.select().from(teams).where(eq(teams.workspaceId, workspaceId));
+    return db.select().from(teams).where(eq(teams.organisationId, workspaceId));
   }
 
   async getTeam(id: number): Promise<Team | undefined> {
@@ -319,8 +319,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTeam(workspaceId: string, ownerId: string, team: CreateTeamRequest): Promise<Team> {
-    const [created] = await db.insert(teams).values({ ...team, workspaceId, ownerId }).returning();
-    await db.insert(teamMembers).values({ teamId: created.id, userId: ownerId, role: "manager" });
+    const [created] = await db.insert(teams).values({ ...team, organisationId: workspaceId, ownerId }).returning();
+    await db.insert(teamMembers).values({ teamId: created.id, userId: ownerId, role: "TEAM_ADMIN" });
     return created;
   }
 
@@ -348,7 +348,7 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return updated;
     }
-    const [created] = await db.insert(teamMembers).values({ teamId, userId, role }).returning();
+    const [created] = await db.insert(teamMembers).values({ teamId, userId, role: role === "member" ? "TEAM_MEMBER" : role }).returning();
     return created;
   }
 
@@ -362,11 +362,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCalendarConnectionsByTenant(workspaceId: string): Promise<CalendarConnection[]> {
-    return db.select().from(calendarConnections).where(eq(calendarConnections.tenantId, workspaceId));
+    return db.select().from(calendarConnections).where(eq(calendarConnections.organisationId, workspaceId));
   }
 
   async getCalendarResourcesByTenant(workspaceId: string): Promise<CalendarResource[]> {
-    return db.select().from(calendarResources).where(eq(calendarResources.tenantId, workspaceId));
+    return db.select().from(calendarResources).where(eq(calendarResources.organisationId, workspaceId));
   }
 
   async getCalendarConnection(id: number): Promise<CalendarConnection | undefined> {
@@ -388,7 +388,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCalendarConnection(workspaceId: string, input: CreateCalendarConnectionRequest): Promise<CalendarConnection> {
-    const [created] = await db.insert(calendarConnections).values({ ...input, tenantId: workspaceId }).returning();
+    const [created] = await db.insert(calendarConnections).values({ ...input, organisationId: workspaceId }).returning();
     return created;
   }
 
@@ -403,7 +403,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCalendarResource(workspaceId: string, input: CreateCalendarResourceRequest): Promise<CalendarResource> {
-    const [created] = await db.insert(calendarResources).values({ ...input, tenantId: workspaceId }).returning();
+    const [created] = await db.insert(calendarResources).values({ ...input, organisationId: workspaceId }).returning();
     return created;
   }
 
@@ -427,7 +427,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSpace(workspaceId: string, space: CreateSpaceRequest): Promise<Space> {
-    const [created] = await db.insert(spaces).values({ ...space, tenantId: workspaceId }).returning();
+    const [created] = await db.insert(spaces).values({ ...space, organisationId: workspaceId }).returning();
     return created;
   }
 
@@ -450,7 +450,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createService(workspaceId: string, service: CreateServiceRequest): Promise<Service> {
-    const [created] = await db.insert(services).values({ ...service, tenantId: workspaceId }).returning();
+    const [created] = await db.insert(services).values({ ...service, organisationId: workspaceId }).returning();
     return created;
   }
 
@@ -475,7 +475,7 @@ export class DatabaseStorage implements IStorage {
   async createBooking(
     userId: string | null,
     booking: CreateBookingRequest & {
-      tenantId?: string | null;
+      organisationId?: string | null;
       guestEmail?: string | null;
       guestName?: string | null;
       calendarResourceId?: number | null;
@@ -491,7 +491,7 @@ export class DatabaseStorage implements IStorage {
         userId,
         guestEmail: booking.guestEmail,
         guestName: booking.guestName,
-        tenantId: booking.tenantId ?? null,
+        organisationId: booking.organisationId ?? null,
         calendarResourceId: booking.calendarResourceId ?? null,
         syncState: booking.syncState ?? "not_required",
         externalEventId: booking.externalEventId ?? null,
@@ -537,7 +537,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInventoryItem(workspaceId: string, item: CreateInventoryItemRequest): Promise<InventoryItem> {
-    const [created] = await db.insert(inventoryItems).values({ ...item, ownerId: workspaceId }).returning();
+    const [created] = await db.insert(inventoryItems).values({ ...item, organisationId: workspaceId }).returning();
     return created;
   }
 

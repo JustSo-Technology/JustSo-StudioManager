@@ -19,54 +19,55 @@ function slugify(value: string) {
 export default function AccessPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { user, activeWorkspaceId } = useAuth();
-  const [workspaceName, setWorkspaceName] = useState("");
+  const { user, activeOrganisationId } = useAuth();
+  const [organisationName, setOrganisationName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
 
-  const { data: workspaces = [], isLoading: isWorkspacesLoading } = useQuery({
-    queryKey: ["/api/workspaces"],
+  const { data: organisations = [], isLoading: isOrganisationsLoading } = useQuery({
+    queryKey: ["/api/organisations"],
     queryFn: async () => {
-      const response = await fetch("/api/workspaces", { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load workspaces.");
+      const response = await fetch("/api/organisations", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load organisations.");
       return response.json();
     },
   });
 
   const { data: invites = [], isLoading: isInvitesLoading } = useQuery({
-    queryKey: ["/api/invites", activeWorkspaceId],
+    queryKey: ["/api/invites", activeOrganisationId],
     queryFn: async () => {
       const response = await fetch("/api/invites", { credentials: "include" });
       if (response.status === 403) return [];
       if (!response.ok) throw new Error("Failed to load invites.");
       return response.json();
     },
-    enabled: !!activeWorkspaceId,
+    enabled: !!activeOrganisationId,
   });
 
-  const createWorkspace = useMutation({
+  const createOrganisation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/workspaces", {
+      const response = await fetch("/api/organisations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          name: workspaceName,
-          displayName: workspaceName,
-          publicSlug: slugify(workspaceName),
+          name: organisationName,
+          displayName: organisationName,
+          publicSlug: slugify(organisationName),
           contactEmail: user?.email,
+          studioId: "justso-studios",
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.message || "Could not create workspace.");
+      if (!response.ok) throw new Error(payload?.message || "Could not create organisation.");
       return payload;
     },
     onSuccess: async () => {
-      setWorkspaceName("");
-      toast({ title: "Workspace created" });
+      setOrganisationName("");
+      toast({ title: "Organisation created" });
       await queryClient.invalidateQueries();
     },
     onError: (error: Error) => {
-      toast({ title: "Workspace error", description: error.message, variant: "destructive" });
+      toast({ title: "Organisation error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -77,9 +78,9 @@ export default function AccessPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          workspaceId: activeWorkspaceId,
+          organisationId: activeOrganisationId,
           email: inviteEmail,
-          role: "member",
+          role: "ORG_MEMBER",
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -115,11 +116,11 @@ export default function AccessPage() {
     [queryClient],
   );
 
-  if (user?.appRole !== "admin") {
+  if (user?.studioRole !== "STUDIO_OWNER" && user?.studioRole !== "STUDIO_ADMIN") {
     return (
       <div className="space-y-3">
-        <h1 className="font-display text-3xl font-bold tracking-tight">Workspace Access</h1>
-        <p className="text-muted-foreground">Only platform admins can manage workspaces and invites.</p>
+        <h1 className="font-display text-3xl font-bold tracking-tight">Organisation Access</h1>
+        <p className="text-muted-foreground">Only studio admins can manage organisations and invites.</p>
       </div>
     );
   }
@@ -127,31 +128,31 @@ export default function AccessPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="font-display text-3xl font-bold tracking-tight">Workspace Access</h1>
-        <p className="mt-1 text-muted-foreground">Create tenant workspaces, then invite users into them through Authentik-backed sign-in.</p>
+        <h1 className="font-display text-3xl font-bold tracking-tight">Organisation Access</h1>
+        <p className="mt-1 text-muted-foreground">Create organisations, then invite users into them through Authentik-backed sign-in.</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
         <Card className="rounded-3xl">
           <CardHeader>
             <CardTitle>Workspaces</CardTitle>
-            <CardDescription>Platform admins create branded business workspaces. Users are then attached by invite.</CardDescription>
+            <CardDescription>Studio admins create branded organisations. Users are then attached by invite.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-3">
-              <Input placeholder="New workspace name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} />
-              <Button onClick={() => createWorkspace.mutate()} disabled={!workspaceName || createWorkspace.isPending}>
-                {createWorkspace.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              <Input placeholder="New organisation name" value={organisationName} onChange={(event) => setOrganisationName(event.target.value)} />
+              <Button onClick={() => createOrganisation.mutate()} disabled={!organisationName || createOrganisation.isPending}>
+                {createOrganisation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               </Button>
             </div>
             <div className="space-y-3">
-              {isWorkspacesLoading ? (
+              {isOrganisationsLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                workspaces.map((workspace: any) => (
-                  <div key={workspace.id} className="rounded-2xl border border-border/70 px-4 py-3">
-                    <div className="font-medium">{workspace.displayName || workspace.name}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">Slug: {workspace.publicSlug || "Not set"}</div>
+                organisations.map((organisation: any) => (
+                  <div key={organisation.id} className="rounded-2xl border border-border/70 px-4 py-3">
+                    <div className="font-medium">{organisation.displayName || organisation.name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Slug: {organisation.publicSlug || "Not set"}</div>
                   </div>
                 ))
               )}
@@ -162,18 +163,18 @@ export default function AccessPage() {
         <Card className="rounded-3xl">
           <CardHeader>
             <CardTitle>Invite Users</CardTitle>
-            <CardDescription>Invites are app-owned. The invited user signs in through Authentik, then the workspace membership is attached after callback.</CardDescription>
+            <CardDescription>Invites are app-owned. The invited user signs in through Authentik, then the organisation membership is attached after callback.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-3">
               <Input
                 type="email"
-                placeholder={activeWorkspaceId ? "Invite email address" : "Select or create a workspace first"}
+                placeholder={activeOrganisationId ? "Invite email address" : "Select or create an organisation first"}
                 value={inviteEmail}
                 onChange={(event) => setInviteEmail(event.target.value)}
-                disabled={!activeWorkspaceId}
+                disabled={!activeOrganisationId}
               />
-              <Button onClick={() => createInvite.mutate()} disabled={!inviteEmail || !activeWorkspaceId || createInvite.isPending}>
+              <Button onClick={() => createInvite.mutate()} disabled={!inviteEmail || !activeOrganisationId || createInvite.isPending}>
                 {createInvite.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
@@ -181,7 +182,7 @@ export default function AccessPage() {
               {isInvitesLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : invites.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No invites for the active workspace yet.</p>
+                <p className="text-sm text-muted-foreground">No invites for the active organisation yet.</p>
               ) : (
                 invites.map((invite: any) => (
                   <div key={invite.id} className="rounded-2xl border border-border/70 px-4 py-3">
