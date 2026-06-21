@@ -8,6 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:e2e": "playwright test",
     "db:migrate": "tsx script/migrate.ts",
     "db:push": "drizzle-kit push"
   },
@@ -83,6 +84,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.1.18",
     "@types/connect-pg-simple": "^7.0.3",
@@ -111,5 +113,9 @@
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
-  }
+  },
+  "description": "Tenant workspace backend for bookings, services, spaces, inventory, calendars, branded public booking pages, OTP guest booking, admin email operations, and Authentik-backed login.",
+  "main": "postcss.config.js",
+  "keywords": [],
+  "author": ""
 }

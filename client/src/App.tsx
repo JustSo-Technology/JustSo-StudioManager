@@ -15,6 +15,7 @@ import Inventory from "./pages/inventory";
 import Hires from "./pages/hires";
 import Teams from "./pages/teams";
 import Profile from "./pages/profile";
+import UserProfile from "./pages/user-profile";
 import PublicPage from "./pages/public-page";
 import TenantPublicPage from "./pages/tenant-public";
 import EmailSettingsPage from "./pages/email-settings";
@@ -39,6 +40,7 @@ function Router() {
             <Route path="/access" component={AccessPage} />
             <Route path="/settings/email" component={EmailSettingsPage} />
             <Route path="/profile" component={Profile} />
+            <Route path="/me" component={UserProfile} />
             <Route component={NotFound} />
           </Switch>
         </AppLayout>

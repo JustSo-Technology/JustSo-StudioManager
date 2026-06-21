@@ -1,6 +1,8 @@
 replit*
 .env
 .env.local
+.env.*
+!.env.example
 *.local
 
 node_modules/
@@ -13,3 +15,11 @@ dist/
 .cursor/
 
 attached_assets/targeted_element_*.png
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+.playwright-mcp/

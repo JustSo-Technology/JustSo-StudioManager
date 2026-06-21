@@ -35,6 +35,7 @@ const sessionUserSchema = z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   fullName: z.string().nullable(),
+  profileImageUrl: z.string().url().nullable().optional(),
   studioRole: z.enum(["STUDIO_OWNER", "STUDIO_ADMIN", "STUDIO_MEMBER"]),
   appRole: z.enum(["admin", "member"]).optional(),
 });
@@ -83,6 +84,7 @@ export const api = {
           user: sessionUserSchema,
           activeStudioId: z.string().nullable(),
           activeOrganisationId: z.string().nullable(),
+          authentikAccountUrl: z.string().url().nullable().optional(),
           organisations: z.array(sessionOrganisationSchema),
           activeWorkspaceId: z.string().nullable().optional(),
           workspaces: z.array(sessionOrganisationSchema).optional(),

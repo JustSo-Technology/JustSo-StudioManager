@@ -13,6 +13,33 @@ const inviteTokenQuerySchema = z.object({
   invite: z.string().optional(),
 });
 
+function normalizeOrganisationRole(role: unknown): "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null {
+  const value = String(role || "").trim().toUpperCase();
+  if (value === "ORG_OWNER" || value === "OWNER") {
+    return "ORG_OWNER";
+  }
+  if (value === "ORG_ADMIN" || value === "ADMIN") {
+    return "ORG_ADMIN";
+  }
+  if (value === "ORG_MEMBER" || value === "MEMBER") {
+    return "ORG_MEMBER";
+  }
+  return null;
+}
+
+function resolveAuthentikAccountUrl(): string | null {
+  const configured = process.env.AUTH_ACCOUNT_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+  try {
+    const { issuerUrl } = getAuthentikConfig();
+    return `${new URL(issuerUrl).origin}/if/user/#/settings`;
+  } catch {
+    return null;
+  }
+}
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -116,19 +143,29 @@ async function ensureStudioMembership(userId: string, role: "STUDIO_OWNER" | "ST
 }
 
 async function resolveLocalUser(userInfo: Record<string, unknown>, issuer: string) {
-  const email = String(userInfo.email || "").toLowerCase();
-  const subject = String(userInfo.sub || "");
-  if (!email || !subject) {
-    throw new Error("Authentik response is missing required email or subject claims.");
+  const subject = String(userInfo.sub || "").trim();
+  if (!subject) {
+    throw new Error("Authentik response is missing required subject claim.");
+  }
+
+  const existingByIdentity = await authStorage.getUserByAuthentikIdentity(issuer, subject);
+  const rawEmail = String(userInfo.email || "").trim().toLowerCase();
+  const preferredUsername = String(userInfo.preferred_username || "").trim().toLowerCase();
+  const fallbackEmailFromUsername = preferredUsername.includes("@") ? preferredUsername : "";
+  const surrogateEmail = `${subject}@authentik.local`;
+  const email = rawEmail || existingByIdentity?.email || fallbackEmailFromUsername || surrogateEmail;
+
+  if (!rawEmail) {
+    console.warn(`OIDC userinfo missing email for subject ${subject}; using fallback email ${email}.`);
   }
 
   const names = deriveNames(userInfo);
-  const preferredUsername = String(userInfo.preferred_username || email.split("@")[0] || "user");
+  const preferredUsernameBase = String(userInfo.preferred_username || email.split("@")[0] || "user");
   const existing =
-    (await authStorage.getUserByAuthentikIdentity(issuer, subject)) ||
+    existingByIdentity ||
     (await authStorage.getUserByEmail(email));
 
-  const username = existing?.username || (await ensureUniqueUsername(preferredUsername));
+  const username = existing?.username || (await ensureUniqueUsername(preferredUsernameBase));
   const shouldBootstrap = await shouldBootstrapAdmin(email);
   const appRole = existing?.appRole || (shouldBootstrap ? "admin" : "member");
 
@@ -183,8 +220,23 @@ async function applyInviteIfPresent(req: any, user: Awaited<ReturnType<typeof re
   req.session.inviteToken = null;
 }
 
+async function saveSession(req: any): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    req.session.save((error: Error | null) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export function registerAuthRoutes(app: Express): void {
   app.get(api.auth.session.path, async (req: any, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     if (!req.session?.user) {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -213,7 +265,7 @@ export function registerAuthRoutes(app: Express): void {
           workspaceId: resolvedInvite.organisationId,
           workspaceName: organisation.displayName || organisation.name,
           email: resolvedInvite.email,
-          role: resolvedInvite.role as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER",
+          role: normalizeOrganisationRole(resolvedInvite.role) || "ORG_MEMBER",
           expiresAt: resolvedInvite.expiresAt.toISOString(),
         };
       }
@@ -228,19 +280,20 @@ export function registerAuthRoutes(app: Express): void {
       activeStudioId: DEFAULT_STUDIO_ID,
       activeOrganisationId,
       activeWorkspaceId: activeOrganisationId,
+      authentikAccountUrl: resolveAuthentikAccountUrl(),
       organisations: organisations.map((organisation) => ({
         id: organisation.id,
         name: organisation.name,
         displayName: organisation.displayName,
         publicSlug: organisation.publicSlug,
-        organisationRole: organisation.membershipRole as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null,
+        organisationRole: normalizeOrganisationRole(organisation.membershipRole),
       })),
       workspaces: organisations.map((organisation) => ({
         id: organisation.id,
         name: organisation.name,
         displayName: organisation.displayName,
         publicSlug: organisation.publicSlug,
-        organisationRole: organisation.membershipRole as "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null,
+        organisationRole: normalizeOrganisationRole(organisation.membershipRole),
       })),
       invite,
     });
@@ -262,14 +315,20 @@ export function registerAuthRoutes(app: Express): void {
   });
 
   app.get("/api/auth/login", async (req: any, res) => {
-    const query = inviteTokenQuerySchema.parse(req.query);
-    if (query.invite) {
-      req.session.inviteToken = query.invite;
-    }
+    try {
+      const query = inviteTokenQuerySchema.parse(req.query);
+      if (query.invite) {
+        req.session.inviteToken = query.invite;
+      }
 
-    const { url, state, codeVerifier } = await buildLoginUrl();
-    req.session.oidc = { state, codeVerifier };
-    return res.redirect(url);
+      const { url, state, codeVerifier } = await buildLoginUrl();
+      req.session.oidc = { state, codeVerifier };
+      await saveSession(req);
+      return res.redirect(url);
+    } catch (error) {
+      console.error("OIDC login init failed:", error);
+      return res.redirect("/?authError=signin_failed");
+    }
   });
 
   app.get("/api/auth/callback", async (req: any, res) => {
@@ -292,6 +351,7 @@ export function registerAuthRoutes(app: Express): void {
         firstName: user.firstName ?? null,
         lastName: user.lastName ?? null,
         fullName: user.fullName ?? null,
+        profileImageUrl: user.profileImageUrl ?? null,
         studioRole: (await ensureStudioMembership(user.id, user.appRole === "admin" ? "STUDIO_OWNER" : "STUDIO_MEMBER")).role,
         activeStudioId: DEFAULT_STUDIO_ID,
       };
@@ -304,6 +364,7 @@ export function registerAuthRoutes(app: Express): void {
         req.session.activeOrganisationId = organisations[0].id;
       }
 
+      await saveSession(req);
       return res.redirect("/");
     } catch (error) {
       console.error("OIDC callback failed:", error);

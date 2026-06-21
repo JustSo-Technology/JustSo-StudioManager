@@ -6,9 +6,17 @@ type SessionResponse = typeof api.auth.session.responses[200]["_type"];
 async function fetchSession(): Promise<SessionResponse | null> {
   const response = await fetch(api.auth.session.path, {
     credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
   });
 
   if (response.status === 401) {
+    return null;
+  }
+  if (response.status === 304) {
     return null;
   }
   if (!response.ok) {
@@ -50,6 +58,7 @@ export function useAuth() {
     user: data?.user ?? null,
     organisations: data?.organisations ?? [],
     activeOrganisationId: data?.activeOrganisationId ?? null,
+    authentikAccountUrl: data?.authentikAccountUrl ?? null,
     workspaces: data?.workspaces ?? data?.organisations ?? [],
     activeWorkspaceId: data?.activeWorkspaceId ?? data?.activeOrganisationId ?? null,
     pendingInvite: data?.invite ?? null,

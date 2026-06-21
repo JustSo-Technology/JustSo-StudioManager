@@ -12,6 +12,7 @@ declare module "express-session" {
       firstName: string | null;
       lastName: string | null;
       fullName: string | null;
+      profileImageUrl?: string | null;
       studioRole: string;
       activeStudioId?: string | null;
     } | null;
@@ -28,6 +29,15 @@ declare module "express-session" {
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000;
+  const secureCookieOverride = process.env.SESSION_COOKIE_SECURE;
+  const secureCookie =
+    secureCookieOverride === "true"
+      ? true
+      : secureCookieOverride === "false"
+        ? false
+        : process.env.NODE_ENV === "production"
+          ? "auto"
+          : false;
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -39,11 +49,12 @@ export function getSession() {
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
+    proxy: true,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: secureCookie,
       sameSite: "lax",
       maxAge: sessionTtl,
     },
@@ -51,7 +62,17 @@ export function getSession() {
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  const trustProxy = process.env.SESSION_TRUST_PROXY;
+  if (!trustProxy || trustProxy === "1") {
+    app.set("trust proxy", 1);
+  } else if (trustProxy === "true") {
+    app.set("trust proxy", true);
+  } else if (trustProxy === "false") {
+    app.set("trust proxy", false);
+  } else {
+    const hops = Number.parseInt(trustProxy, 10);
+    app.set("trust proxy", Number.isFinite(hops) ? hops : 1);
+  }
   app.use(getSession());
 
   app.use(async (req, _res, next) => {
@@ -74,6 +95,7 @@ export async function setupAuth(app: Express) {
       firstName: user.firstName ?? null,
       lastName: user.lastName ?? null,
       fullName: user.fullName ?? null,
+      profileImageUrl: user.profileImageUrl ?? null,
       studioRole: req.session.user?.studioRole || "STUDIO_MEMBER",
       activeStudioId: req.session.user?.activeStudioId || null,
     };

@@ -157,8 +157,16 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild className="rounded-xl">
               <Link href="/profile" className="flex items-center gap-3 px-3 py-2.5">
-                <User className="h-4 w-4 opacity-70" />
+                <Building2 className="h-4 w-4 opacity-70" />
                 <span className="flex-1 truncate">Organisation Profile</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild className="rounded-xl">
+              <Link href="/me" className="flex items-center gap-3 px-3 py-2.5">
+                <User className="h-4 w-4 opacity-70" />
+                <span className="flex-1 truncate">User Profile</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
