@@ -231,7 +231,7 @@ Use separate values for:
 npm install
 ```
 
-## 9. Push the Database Schema
+## 9. Run Database Migrations
 
 The app and session store both rely on Postgres schema being present.
 
@@ -240,7 +240,7 @@ set -a
 source .env
 set +a
 
-npm run db:push
+npm run db:migrate
 ```
 
 If `DATABASE_URL` is missing or wrong, this step will fail.
@@ -394,7 +394,7 @@ npm install
 set -a
 source .env
 set +a
-npm run db:push
+npm run db:migrate
 npm run build
 sudo systemctl restart studiomanager
 ```
@@ -446,7 +446,7 @@ The app keeps local authorization state. Authentik is the identity provider, not
 
 ## Known Setup Pitfalls
 
-- `npm run db:push` fails if `DATABASE_URL` is not exported into the current shell
+- `npm run db:migrate` fails if `DATABASE_URL` is not exported into the current shell
 - Authentik login fails if the public redirect URI does not exactly match the configured provider callback
 - logout feels broken if `AUTH_LOGOUT_REDIRECT_URI` is wrong
 - the first admin will not be predictable if you leave `AUTH_BOOTSTRAP_ADMIN_EMAILS` empty and multiple people sign in early
